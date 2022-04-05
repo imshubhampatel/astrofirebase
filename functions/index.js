@@ -157,7 +157,7 @@ app.post('/intiatetransaction/', async (req, response) => {
     req.body.orderId &&
     req.body.amount 
 ) {
-    const writeResult1 = await admin.firestore().collection('payments').doc(req.body['orderId']).set({"user": req.body['user'], "order": req.body['orderId'] ,status: "Initiated"});
+    const writeResult1 = await admin.firestore().collection('payments').doc(req.body['orderId']).set({"user": req.body['user'], "order": req.body['orderId'] ,status: "Initiated","amount": req.body['amount'] });
 
     var paytmParams = {};
     callbackUrl="https://securegw.paytm.in/theia/paytmCallback?ORDER_ID=";
@@ -232,9 +232,7 @@ app.post('/updatetransaction/', async (req, res) => {
     callbackUrl= callbackUrl.concat(req.body['ORDERID']);
     var body = { "requestType" : "Payment", "mid" : PAYTM_MID, "websiteName" : "astrocharcha", "orderId" :  req.body['ORDERID'], "callbackUrl" : callbackUrl, "txnAmount" : {"value" : req.body['TXNAMOUNT'],"currency" : "INR", },"userInfo": {"custId" : paymentData.user, }, };
 
-      //  console.log(body);
-
-       console.log(paymentData);
+      console.log(paymentData);
 
       /* checksum that we need to verify */
       var paytmChecksum = req.body['CHECKSUMHASH'];
@@ -249,39 +247,68 @@ app.post('/updatetransaction/', async (req, res) => {
       if(req.body['STATUS']=='TXN_SUCCESS')
       {  
         addMoneyToWallet(paymentData.user,req.body['TXNAMOUNT'],req.body['ORDERID']);
-      }
 
-      var amount = req.body['TXNAMOUNT'];
-    
-      admin.firestore().collection('app_details').doc("money").get().then((moneyRef) => {
-        moneyData = moneyRef.data(); 
-        var userAmount = amount * ((100)/(100+moneyData.gst));
-        var gst = amount - userAmount;
-        gst = gst.toFixed(2);
-        var addedAmount = userAmount.toFixed(2); 
-        var gstPercent = moneyData.gst;
+        var amount = req.body['TXNAMOUNT'];
 
-      admin.firestore().collection("user").doc(paymentData.user).get().then((userRef) => {
-        data = userRef.data();
-        const msg = {
-          from: 'astrochrchatech@gmail.com', // Something like: Jane Doe <janedoe@gmail.com>
-          to: data['email'],
-          templateId: "d-f1edfa12bbd84263af4d28493a056f4a",
-          dynamic_template_data: {
-                amount: amount,
-                addedAmount: addedAmount,
-                gstAmount: gst,
-                gst: gstPercent,
-                orderId: req.body['ORDERID'],
-                firstName: data.firstName,
-                lastName: data.lastName
-            },
-         };
-      
-        sgMail.send(msg);
+        var invoiceNo = 0
+
+        adminRef = admin.firestore().collection('app_details').doc('adminDetails');
+        admin.firestore().runTransaction((transaction) => {
+          return transaction.get(adminRef).then((res) => {
+  
+              if (!res.exists) {
+                  throw "Document does not exist!";
+              }
+  
+              var newInvoiceNo = res.data().currentInvoiceNo + 1;
+              invoiceNo = newInvoiceNo;
+  
+              functions.logger.log(newInvoiceNo);
+  
+              transaction.update(adminRef, {
+                  "currentInvoiceNo": newInvoiceNo,
+              });
+  
+          });
+  
         });
+       
+        admin.firestore().collection('payments').doc(req.body['ORDERID']).update({"invoiceNo": +invoiceNo, "status": req.body['STATUS'], "txnId": req.body['TXNID']});
+      
+        admin.firestore().collection('app_details').doc("money").get().then((moneyRef) => {
+          moneyData = moneyRef.data(); 
+          var userAmount = amount * ((100)/(100+moneyData.gst));
+          var gst = amount - userAmount;
+          gst = gst.toFixed(2);
+          var addedAmount = userAmount.toFixed(2); 
+          var gstPercent = moneyData.gst;
 
-      });
+        admin.firestore().collection("user").doc(paymentData.user).get().then((userRef) => {
+          data = userRef.data();
+          const msg = {
+            from: 'astrochrchatech@gmail.com', // Something like: Jane Doe <janedoe@gmail.com>
+            to: data['email'],
+            templateId: "d-f1edfa12bbd84263af4d28493a056f4a",
+            dynamic_template_data: {
+                  amount: amount,
+                  addedAmount: addedAmount,
+                  gstAmount: gst,
+                  gst: gstPercent,
+                  invoiceNo: invoiceNo,
+                  orderId: req.body['ORDERID'],
+                  firstName: data.firstName,
+                  lastName: data.lastName
+              },
+          };
+        
+          sgMail.send(msg);
+          });
+
+        });
+    }
+    else {
+      admin.firestore().collection('payments').doc(req.body['ORDERID']).update({"status": req.body['STATUS'], "txnId": req.body['TXNID']});
+    }
 
   })
 
@@ -314,10 +341,10 @@ function deductAmount(meetingAmount,meetingId,userId,res,time) {
 
       status2 = db.collection('user').doc(userId).collection("wallet_transaction").add({"subtypeId":meetingId,"amount":+meetingAmount,"type":"debit","subtype":"meeting","date":admin.firestore.FieldValue.serverTimestamp()});
   
-      admin.firestore().collection('user').doc(userId).get().then((userRef)=> {
-          userData = userRef.data();
-          fcm_notification("token",userData.tokens[userData.tokens.length-1],"Wallet Balance Debited","Wallet Balance debited for meeting",{"type": "debit"});
-      })
+      // admin.firestore().collection('user').doc(userId).get().then((userRef)=> {
+      //     userData = userRef.data();
+      //     fcm_notification("token",userData.tokens[userData.tokens.length-1],"Wallet Balance Debited","Wallet Balance debited for meeting",{"type": "debit"});
+      // })
       
       res.status(201).send(`{ "message" : "true" }`);
 }
@@ -504,36 +531,47 @@ exports.onMeetingUpdate = functions.firestore.document('/meetings/{meetingId}')
       const originalData = change.before.data();
       const updatedData = change.after.data();
 
-      if(originalData.status != updatedData.status && updatedData.status == "ongoing")
+      if(originalData.status == "cancelled" || originalData.status == "missed" ) {
+        admin.firestore().collection('meetings').doc(context.params.meetingId).update({"status": originalData.status });
+      }
+
+      if(originalData.status == "accepted" && updatedData.status == "ongoing")
       { 
-        console.log("Ongoing notification");
+        // console.log("Ongoing notification");
         updateAstrologerCurrentStatus(updatedData.astrologerUid,false);
-        admin.firestore().collection('astrologer').doc(updatedData.astrologerUid).get().then((astrologerRef) => {
+      //   admin.firestore().collection('astrologer').doc(updatedData.astrologerUid).get().then((astrologerRef) => {
 
-        astrologerData = astrologerRef.data();
-        console.log(astrologerData.tokens);
-        admin.firestore().collection('user').doc(updatedData.userUid).get().then((userRef) => {
+      //   astrologerData = astrologerRef.data();
+      //   console.log(astrologerData.tokens);
+      //   admin.firestore().collection('user').doc(updatedData.userUid).get().then((userRef) => {
 
-          userData = userRef.data();
+      //     userData = userRef.data();
 
-          // fcm_notification("token",astrologerData.tokens[astrologerData.tokens.length-1],"Meeting started","Please join the meeting",{"type": "meetingStarted"});
-          // fcm_notification("token",userData.tokens[userData.tokens.length-1],"Meeting Started","Please join the meeting",{"type": "meetingStarted"});
+      //     // fcm_notification("token",astrologerData.tokens[astrologerData.tokens.length-1],"Meeting started","Please join the meeting",{"type": "meetingStarted"});
+      //     // fcm_notification("token",userData.tokens[userData.tokens.length-1],"Meeting Started","Please join the meeting",{"type": "meetingStarted"});
         
-      });
+      // });
 
-      })
+      // })
+     }
+
+     if(originalData.status == "ongoing" && originalData.status != updatedData.status ) {
+        updateAstrologerCurrentStatus(updatedData.astrologerUid,true);
      }
      
-     if(originalData.status != updatedData.status && updatedData.status == "accepted")
+     if(originalData.status == "Initiated" && updatedData.status == "accepted")
       {
         console.log("fcm_started");
-        admin.firestore().collection('user').doc(updatedData.userUid).get().then((userRef) => {
+          if(updatedData.subtype != "Right Now")
+          {
+            admin.firestore().collection('user').doc(updatedData.userUid).get().then((userRef) => {
 
-          userData = userRef.data();
-          console.log("fcm_accepted");
-          fcm_notification("token",userData.tokens[userData.tokens.length-1],"Meeting accepted","Your request for meeting is accepted",{"type": "meetingAccepted"});
-        
-      });
+            userData = userRef.data();
+            console.log("fcm_accepted");
+            fcm_notification("token",userData.tokens[userData.tokens.length-1],"Meeting accepted","Your request for meeting is accepted",{"type": "meetingAccepted"});
+          
+          });
+        }
       if(updatedData.subtype == "Scheduled")
       {
           admin.firestore().collection('astrologer').doc(updatedData.astrologerUid).collection("slot").doc(updatedData.day).collection("day_slot").doc(updatedData.slotId).update({"status": "booked"});
@@ -541,9 +579,8 @@ exports.onMeetingUpdate = functions.firestore.document('/meetings/{meetingId}')
 
      }
 
-     if(originalData.status != updatedData.status && updatedData.status == "refunded")
+     if(originalData.status == "ongoing" && updatedData.status == "refunded")
      {  
-        updateAstrologerCurrentStatus(updatedData.astrologerUid,true);
         amount = ((updatedData.lastDuration-updatedData.lastActualDuration)/updatedData.lastDuration)*updatedData.lastAmountDeduct;
         amount = amount.toFixed(2);
         status1 = db.collection('user').doc(updatedData.userUid).update({"walletBalance": admin.firestore.FieldValue.increment(+amount)});
@@ -555,25 +592,47 @@ exports.onMeetingUpdate = functions.firestore.document('/meetings/{meetingId}')
         
      }
 
-     if(originalData.status != updatedData.status && updatedData.status == "completed")
+     if(originalData.status == "ongoing" &&  updatedData.status == "completed" )
      {  
-        updateAstrologerCurrentStatus(updatedData.astrologerUid,true);
-        updateAstrologerBalance(updatedData.astrologerUid,updatedData.totalAmount,context.params.meetingId,"meeting");
-        updateMeetingMetrics(updatedData.astrologerUid,updatedData.userUid,updatedData.totalDuration,updatedData.type);
-        admin.firestore().collection('user').doc(updatedData.userUid).update({"meetingCount": admin.firestore.FieldValue.increment(1)});
-        admin.firestore().collection('astrologer').doc(updatedData.astrologerUid).update({"meetingCount": admin.firestore.FieldValue.increment(1)});
-
-        admin.firestore().collection('app_details').doc('astrologerDetails').update({"totalMeetings": admin.firestore.FieldValue.increment(1)});
+        if(updatedData.userCount<2) 
+        {
+          console.log("meeting missed");
+          admin.firestore().collection('meetings').doc(context.params.meetingId).update({"status": "missed"});
+        }
+        else
+        {
+          updateAstrologerBalance(updatedData.astrologerUid,updatedData.totalAmount,context.params.meetingId,"meeting");
+          updateMeetingMetrics(updatedData.astrologerUid,updatedData.userUid,updatedData.totalDuration,updatedData.type);
+          admin.firestore().collection('user').doc(updatedData.userUid).update({"meetingCount": admin.firestore.FieldValue.increment(1)});
+          admin.firestore().collection('astrologer').doc(updatedData.astrologerUid).update({"meetingCount": admin.firestore.FieldValue.increment(1)});
+          admin.firestore().collection('app_details').doc('astrologerDetails').update({"totalMeetings": admin.firestore.FieldValue.increment(1)});
+        }
      }
 
-     if(originalData.status != updatedData.status && updatedData.status == "cancelled")
+     if((originalData.status == "accepted" || originalData.status == "ongoing")  && updatedData.status == "cancelled"  )
      {  
-        updateAstrologerCurrentStatus(updatedData.astrologerUid,true);
         amount = updatedData.totalAmount;
         status1 = db.collection('user').doc(updatedData.userUid).update({"walletBalance": admin.firestore.FieldValue.increment(amount)});
         status2 = db.collection('user').doc(updatedData.userUid).collection("wallet_transaction").add({"subtypeId":context.params.meetingId,"amount":+amount,"type":"credit","subtype":"meeting","date":admin.firestore.FieldValue.serverTimestamp()});
         db.collection('meetings').doc(context.params.meetingId).update({"totalAmount": admin.firestore.FieldValue.increment(-amount)});
      }
+
+     if( originalData.status == "completed"   &&  updatedData.status == "missed"  )
+     {  
+        amount = updatedData.totalAmount;
+        status1 = db.collection('user').doc(updatedData.userUid).update({"walletBalance": admin.firestore.FieldValue.increment(amount)});
+        status2 = db.collection('user').doc(updatedData.userUid).collection("wallet_transaction").add({"subtypeId":context.params.meetingId,"amount":+amount,"type":"credit","subtype":"meeting","date":admin.firestore.FieldValue.serverTimestamp()});
+        db.collection('meetings').doc(context.params.meetingId).update({"totalAmount": admin.firestore.FieldValue.increment(-amount)});
+        
+        admin.firestore().collection('user').doc(updatedData.userUid).get().then((userRef) => {
+          userData = userRef.data();
+          console.log("fcm_accepted");
+          fcm_notification("token",userData.tokens[userData.tokens.length-1],"Meeting Missed","You missed the meeting",{"type": "meetingMissed"});
+        
+        });
+     }
+
+
 
      if(originalData.rate != updatedData.rate)
      {
@@ -584,6 +643,7 @@ exports.onMeetingUpdate = functions.firestore.document('/meetings/{meetingId}')
      }
 
 
+    
 
     }); 
 
@@ -626,9 +686,6 @@ exports.makeMeeting = functions.firestore.document('/meetings/{meetingId}')
   
   });
 
-  
-
-  
   return ;
 });
 
@@ -683,26 +740,26 @@ exports.makeAstrologer = functions.firestore.document('/astrologer/{astrologerId
 
       functions.logger.log(original);
 
-      const writeResult = await admin.firestore().collection('security_groups').doc('astrologer').collection('astrologer').doc(context.params.documentId).set({"name": original});
+      // const writeResult = await admin.firestore().collection('security_groups').doc('astrologer').collection('astrologer').doc(context.params.astrologerId).set({"name": original});
       const ref = await admin.firestore().collection('app_details').doc("astrologerDetails").update({"astrologerCount": admin.firestore.FieldValue.increment(1)});
 
         admin.firestore().collection('app_details').doc("astrologerDetails").collection("pricing_categories").doc(original['pricingCategory']).get().then((priceRef) => {
           priceData = priceRef.data();
-          admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({"priceChat":priceData.priceChat, "priceVoice":priceData.priceVoice, "priceVideo":priceData.priceVideo });
+          admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({"priceChat":priceData.priceChat, "priceVoice":priceData.priceVoice, "priceVideo":priceData.priceVideo, "currentDiscount": priceData.currentDiscount });
         });
 
-      const msg = {
-        from: 'astrochrchatech@gmail.com', // Something like: Jane Doe <janedoe@gmail.com>
-        to: original['email'],
-        templateId: "d-68b0e46471734ae9b5f6ffbd00a981a0",
-        dynamic_template_data: {
-              name: original['firstName'],
-        },
-      };
+      // const msg = {
+      //   from: 'astrochrchatech@gmail.com', // Something like: Jane Doe <janedoe@gmail.com>
+      //   to: original['email'],
+      //   templateId: "d-68b0e46471734ae9b5f6ffbd00a981a0",
+      //   dynamic_template_data: {
+      //         name: original['firstName'],
+      //   },
+      // };
     
-      sgMail.send(msg);
+      // sgMail.send(msg);
 
-      saveEmailInSendgrid(original['firstName'],original['email'],"79b82482-54aa-4f8f-9007-2d566c4dc7d6");
+      // saveEmailInSendgrid(original['firstName'],original['email'],"79b82482-54aa-4f8f-9007-2d566c4dc7d6");
 
       return writeResult1;
 
@@ -729,7 +786,7 @@ exports.makeuser = functions.firestore.document('/user/{documentId}')
       const msg = {
         from: 'astrochrchatech@gmail.com', // Something like: Jane Doe <janedoe@gmail.com>
         to: original['email'],
-        templateId: "d-e877a6bfefa14ee9b92821cf2e04bd56",
+        templateId: "d-953328393c3a42f6a3c46e084786fb27",
         dynamic_template_data: {
               name: original['firstName'],
           },
@@ -955,7 +1012,7 @@ exports.updateAstrologer = functions.firestore.document('/astrologer/{astrologer
 
         admin.firestore().collection('app_details').doc("astrologerDetails").collection("pricing_categories").doc(updatedData.pricingCategory).get().then((priceRef) => {
           priceData = priceRef.data();
-          admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({"priceChat":priceData.priceChat, "priceVoice":priceData.priceVoice, "priceVideo":priceData.priceVideo });
+          admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({"priceChat":priceData.priceChat, "priceVoice":priceData.priceVoice, "priceVideo":priceData.priceVideo , "currentDiscount": priceData.currentDiscount });
         });
 
       };
@@ -1099,41 +1156,42 @@ exports.updatePricingCategory = functions.firestore.document('/app_details/astro
   });
 
 
-exports.scheduledFunctionCrontab = functions.pubsub.schedule('00 4 * * *')
+return exports.scheduledFunctionCrontab = functions.pubsub.schedule('00 00 * * *')
     .timeZone('Asia/Kolkata') // Users can choose timezone - default is America/Los_Angeles
-    .onRun((context) => {
+    .onRun(async (context) =>  {
 
       const _datarwt = [];
     
-      admin.firestore().collection('astrologer').get().then((astrologerSnap) => {
-
-        const currentDate = admin.firestore.Timestamp.now();
-        const previousDate = new admin.firestore.Timestamp(
-        currentDate.seconds - 86400,
-        currentDate.nanoseconds).toDate();
-        var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        var dayName = days[previousDate.getDay()];
-        astrologerSnap.docs.map((doc)=> {
-          admin.firestore().collection('astrologer').doc(doc.ref.id).collection('slot').doc(dayName).collection("day_slot").get().then((slotSnap) => {
-            slotSnap.docs.map((slotDoc) => {
-                  admin.firestore().collection('astrologer').doc(doc.ref.id).collection('slot').doc(dayName).collection("day_slot").doc(slotDoc.ref.id).get().then((slotRef) => {
-                    slotData = slotRef.data();
-                    if(slotData.type == "norepeat")
-                    {
-                      _datarwt.push( admin.firestore().collection('astrologer').doc(doc.ref.id).collection('slot').doc(dayName).collection("day_slot").doc(slotDoc.ref.id).delete());
-                    }
-                    else
-                    {
-                      const todayDate = admin.firestore.Timestamp.now();
-                      const nextWeekDate = new admin.firestore.Timestamp(
-                          todayDate.seconds + 518400 , todayDate.nanoseconds);
-                          _datarwt.push( admin.firestore().collection('astrologer').doc(doc.ref.id).collection('slot').doc(dayName).collection("day_slot").doc(slotDoc.ref.id).update({"status": "available", "date": nextWeekDate }));
-                    }
-                  });
-              });
-        });
-      });
-    });
+    //   admin.firestore().collection('astrologer').get().then((astrologerSnap) => {
+    //     astrologerDocs = astrologerSnap.docs;
+    //     const currentDate = admin.firestore.Timestamp.now();
+    //     const previousDate = new admin.firestore.Timestamp(
+    //     currentDate.seconds - 86400,
+    //     currentDate.nanoseconds).toDate();
+    //     var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    //     var dayName = days[previousDate.getDay()];
+    //     astrologerDocs.map((doc)=> {
+    //       admin.firestore().collection('astrologer').doc(doc.ref.id).collection('slot').doc(dayName).collection("day_slot").get().then((slotSnap) => {
+    //         slotDocs = slotSnap.docs;
+    //         slotDocs.map((slotDoc) => {
+    //               admin.firestore().collection('astrologer').doc(doc.ref.id).collection('slot').doc(dayName).collection("day_slot").doc(slotDoc.ref.id).get().then((slotRef) => {
+    //                 slotData = slotRef.data();
+    //                 if(slotData.type == "norepeat")
+    //                 {
+    //                   _datarwt.push( admin.firestore().collection('astrologer').doc(doc.ref.id).collection('slot').doc(dayName).collection("day_slot").doc(slotDoc.ref.id).delete());
+    //                 }
+    //                 else
+    //                 {
+    //                   const todayDate = admin.firestore.Timestamp.now();
+    //                   const nextWeekDate = new admin.firestore.Timestamp(
+    //                       todayDate.seconds + 518400 , todayDate.nanoseconds);
+    //                       _datarwt.push( admin.firestore().collection('astrologer').doc(doc.ref.id).collection('slot').doc(dayName).collection("day_slot").doc(slotDoc.ref.id).update({"status": "available", "date": nextWeekDate }));
+    //                 }
+    //               });
+    //           });
+    //     });
+    //   });
+    // });
 
 
     const currentDate = admin.firestore.Timestamp.now();
@@ -1141,10 +1199,15 @@ exports.scheduledFunctionCrontab = functions.pubsub.schedule('00 4 * * *')
     currentDate.seconds - 176400,
     currentDate.nanoseconds).toDate();
     const endDate = new admin.firestore.Timestamp(
-      currentDate.seconds - 57600,
+      currentDate.seconds - 86400,
       currentDate.nanoseconds).toDate();
-    admin.firestore().collection('meetings').where("date", ">=", startDate ).where("date", ">=", endDate ).get().then((meetingSnap) => {
-      meetingSnap.docs.map((doc)=> {
+
+    console.log(startDate);
+    console.log(endDate);
+    
+    admin.firestore().collection('meetings').where("scheduledTime", ">=", startDate ).where("scheduledTime", "<=", endDate ).get().then((meetingSnap) => {
+      docs = meetingSnap.docs;
+      docs.map((doc)=> {
         console.log(doc.ref.id);
         admin.firestore().collection('meetings').doc(doc.ref.id).get().then((meetingRef) => {
           meetingData = meetingRef.data();
@@ -1164,8 +1227,9 @@ exports.scheduledFunctionCrontab = functions.pubsub.schedule('00 4 * * *')
     });
   });
 
-  admin.firestore().collection('broadcasts').where("date", ">=", startDate ).where("date", ">=", endDate ).get().then((broadcastSnap) => {
-    broadcastSnap.docs.map((doc)=> {
+  admin.firestore().collection('broadcasts').where("scheduledTime", ">=", startDate ).where("scheduledTime", "<=", endDate ).get().then((broadcastSnap) => {
+    docs = broadcastSnap.docs;
+    docs.map((doc)=> {
       console.log(doc.ref.id);
       admin.firestore().collection('broadcasts').doc(doc.ref.id).get().then((broadcastRef) => {
         broadcastData = broadcastRef.data();
@@ -1177,7 +1241,7 @@ exports.scheduledFunctionCrontab = functions.pubsub.schedule('00 4 * * *')
   });
 });
 
-  const _dataloaded = Promise.all( _datarwt );
+  const _dataloaded = await Promise.all( _datarwt );
 
     return _dataloaded;
 });
