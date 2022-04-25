@@ -380,7 +380,7 @@ app.post('/updatetransaction_v2/', async (req, res) => {
       if (req.body['CASHBACK_ID'] != '') {
         db.collection('cashback')
           .doc(req.body['CASHBACK_ID']).get().then((cashbackRef) => {
-            addCashbackMoney(paymentData.user, cashbackRef.data.cashback, req.body['ORDERID'])
+            addCashbackMoney(paymentData.user, cashbackRef.data().cashback, req.body['ORDERID'])
           });
       }
 
