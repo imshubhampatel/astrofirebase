@@ -109,6 +109,8 @@ function addMoneyToWallet(user, amount, orderID) {
 
     console.log('Money added to wallet');
   });
+
+  console.log('Money added to wallet sync');
 }
 
 function addCashbackMoney(user, amount, orderID, cashbackName) {
