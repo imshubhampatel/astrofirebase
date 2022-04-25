@@ -128,6 +128,15 @@ function addCashbackMoney(user, amount, orderID, cashbackName) {
 
   db.collection('cashback')
     .doc(cashbackName)
+    .collection('uses').doc(user.uid).get().then((cashbackDoc) => {
+      cashbackDoc.ref.update({
+        totalCashback: cashbackDoc.data().totalCashback + amount,
+        useCount: cashbackDoc.data().useCount,
+      });
+    })
+
+  db.collection('cashback')
+    .doc(cashbackName)
     .update({ 'useCount': admin.firestore.FieldValue.increment(1) });
 }
 
@@ -216,7 +225,6 @@ app.post('/intiatetransaction/', async (req, response) => {
       .status(401)
       .send('{"message": "Invalid Data"}');
   }
-
 })
 
 app.post('/refund/', async (req, res) => {
