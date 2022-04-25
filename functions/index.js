@@ -106,6 +106,8 @@ function addMoneyToWallet(user, amount, orderID) {
       .doc(user)
       .collection("wallet_transaction")
       .add({ "subtypeId": orderID, "amount": +userAmount, "type": "credit", "subtype": "payment", "date": admin.firestore.FieldValue.serverTimestamp() });
+
+    console.log('Money added to wallet');
   });
 }
 
@@ -138,6 +140,8 @@ function addCashbackMoney(user, amount, orderID, cashbackName) {
   db.collection('cashback')
     .doc(cashbackName)
     .update({ 'useCount': admin.firestore.FieldValue.increment(1) });
+
+  console.log('money added to cashback');
 }
 
 function updateAstrologerBalance2(astrologerId, astrologerAmount, subtypeId, subtype) {
@@ -376,7 +380,7 @@ app.post('/updatetransaction_v2/', async (req, res) => {
       if (req.body['CASHBACK_ID'] != '') {
         db.collection('cashback')
           .doc(req.body['CASHBACK_ID']).get().then((cashbackRef) => {
-            addCashbackMoney(paymentData.user, cashbackRef.data.cashback, '')
+            addCashbackMoney(paymentData.user, cashbackRef.data.cashback, req.body['ORDERID'])
           });
       }
 
