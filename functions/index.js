@@ -1,5 +1,5 @@
 const functions = require("firebase-functions");
-
+const googleapis = require("googleapis")
 // The Firebase Admin SDK to access Firestore.
 const admin = require('firebase-admin');
 const PaytmChecksum = require('paytmchecksum');
@@ -17,6 +17,18 @@ sgClient.setApiKey("SG.KuGn-gmER_eCmRr0INSJug.4UEZBrpEZu_fV6oQLNRjXfp3ejkPGznQE8
 
 const app = express();
 const main = express();
+const key = require("./service-key.json"); 
+
+const authClient = new googleapis.google.auth.JWT({
+  email: key.client_email,
+  key: key.private_key,
+  scopes: ["https://www.googleapis.com/auth/datastore", "https://www.googleapis.com/auth/cloud-platform"]
+});
+
+const firestoreClient = googleapis.google.firestore({
+  version: "v1beta2",
+  auth: authClient
+})
 
 main.use('/api/', app);
 main.use(bodyParser.json());
@@ -226,7 +238,7 @@ app.post('/updatetransaction/', async (req, res) => {
   console.log(req.body);
 
   /* string we need to verify against checksum */
-  admin.firestore().collection('payments').doc(req.body['ORDERID']).get().then((paymentRef) => {
+  admin.firestore().collection('payments').doc(req.body['ORDERID']).get().then(async (paymentRef) => {
     paymentData = paymentRef.data();
     callbackUrl="https://securegw.paytm.in/theia/paytmCallback?ORDER_ID=";
     callbackUrl= callbackUrl.concat(req.body['ORDERID']);
@@ -253,7 +265,7 @@ app.post('/updatetransaction/', async (req, res) => {
         var invoiceNo = 0
 
         adminRef = admin.firestore().collection('app_details').doc('adminDetails');
-        admin.firestore().runTransaction((transaction) => {
+        await admin.firestore().runTransaction((transaction) => {
           return transaction.get(adminRef).then((res) => {
   
               if (!res.exists) {
@@ -318,13 +330,12 @@ app.post('/updatetransaction/', async (req, res) => {
 
 })
 
-function deductAmount(meetingAmount,meetingId,userId,res,time) {
-
-  admin.firestore().collection('meetings').doc(meetingId).update({ "totalAmount": admin.firestore.FieldValue.increment(+meetingAmount), "lastAmountDeduct": +meetingAmount, "totalDuration": admin.firestore.FieldValue.increment(time) });
+async function deductAmount(meetingAmount,meetingId,userId,res,time) {
 
   tuserRef = db.collection('user').doc(userId);
+  success = false;
 
-    admin.firestore().runTransaction((transaction) => {
+    await admin.firestore().runTransaction((transaction) => {
       return transaction.get(tuserRef).then((result) => {
 
           tuserData = result.data();
@@ -333,20 +344,23 @@ function deductAmount(meetingAmount,meetingId,userId,res,time) {
             {
               res.status(400).send(`{ "message" : "Insufficient balance" }`);
             }
-
-          transaction.update(tuserRef, {"walletBalance": admin.firestore.FieldValue.increment(-meetingAmount) });
-
+          else 
+            {
+              transaction.update(tuserRef, {"walletBalance": admin.firestore.FieldValue.increment(-meetingAmount) });
+              success = true;
+              res.status(201).send(`{ "message" : "true" }`);
+            }
       });
     });
 
-      status2 = db.collection('user').doc(userId).collection("wallet_transaction").add({"subtypeId":meetingId,"amount":+meetingAmount,"type":"debit","subtype":"meeting","date":admin.firestore.FieldValue.serverTimestamp()});
-  
-      // admin.firestore().collection('user').doc(userId).get().then((userRef)=> {
-      //     userData = userRef.data();
-      //     fcm_notification("token",userData.tokens[userData.tokens.length-1],"Wallet Balance Debited","Wallet Balance debited for meeting",{"type": "debit"});
-      // })
-      
-      res.status(201).send(`{ "message" : "true" }`);
+    if(success)
+      {
+        admin.firestore().collection('meetings').doc(meetingId).update({ "totalAmount": admin.firestore.FieldValue.increment(+meetingAmount), "lastAmountDeduct": +meetingAmount, "totalDuration": admin.firestore.FieldValue.increment(+time) });
+        status2 = db.collection('user').doc(userId).collection("wallet_transaction").add({"subtypeId":meetingId,"amount":+meetingAmount,"type":"debit","subtype":"meeting","date":admin.firestore.FieldValue.serverTimestamp()});
+      }
+
+    return;
+
 }
 
 
@@ -361,11 +375,11 @@ app.post('/deductAmount/', async (req, res) => {
       }
 
       console.log(meetingId);
-      db.collection('meetings').doc(meetingId).get().then((meetingRef) => {
+      db.collection('meetings').doc(meetingId).get().then(async (meetingRef) => {
         meetingData = meetingRef.data();
-        db.collection('astrologer').doc(meetingData.astrologerUid).get().then((astrologerRef) => {
+        db.collection('astrologer').doc(meetingData.astrologerUid).get().then(async (astrologerRef) => {
             astrologerData = astrologerRef.data();
-          db.collection('user').doc(meetingData.userUid).get().then((userRef) => {
+          db.collection('user').doc(meetingData.userUid).get().then(async (userRef) => {
             userData = userRef.data();
             meetingRate = meetingData.consultationRate;
             meetingAmount = meetingRate * time;
@@ -373,7 +387,7 @@ app.post('/deductAmount/', async (req, res) => {
 
             if(meetingData.coupon != null && meetingData.coupon != "" )
             {
-               db.collection('coupon').doc(meetingData.coupon).get().then((couponRef)=> {
+               db.collection('coupon').doc(meetingData.coupon).get().then(async (couponRef)=> {
                   couponData = couponRef.data();
 
                   if(couponData !=null)
@@ -393,7 +407,7 @@ app.post('/deductAmount/', async (req, res) => {
 
                         discount = discount.toFixed(2);
 
-                        db.collection('coupon').doc(meetingData.coupon).collection('uses').doc(meetingData.userUid).get().then((useRef)=> {
+                        db.collection('coupon').doc(meetingData.coupon).collection('uses').doc(meetingData.userUid).get().then(async (useRef)=> {
                           useData = useRef.data();
                           if(useData != null)
                           { 
@@ -413,15 +427,15 @@ app.post('/deductAmount/', async (req, res) => {
                             }
                             meetingAmount = meetingAmount - discount;
                             meetingAmount = meetingAmount.toFixed(2);
-                            deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
+                            await deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
                           }
                           else 
                             {
                               db.collection('coupon').doc(meetingData.coupon).collection('uses').doc(meetingData.userUid).set({"useCount": 1 , "totalDiscount": +discount});
                               meetingAmount = meetingAmount - discount;
                               meetingAmount = meetingAmount.toFixed(2);
-                              deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
-                            }
+                              await deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
+                          }
                         });
 
                       }
@@ -429,7 +443,7 @@ app.post('/deductAmount/', async (req, res) => {
                 else {
                   meetingAmount = meetingAmount - discount;
                   meetingAmount = meetingAmount.toFixed(2);
-                  deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
+                  await deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
                 }
 
                 });
@@ -437,7 +451,7 @@ app.post('/deductAmount/', async (req, res) => {
             else {
               meetingAmount = meetingAmount - discount;
               meetingAmount = meetingAmount.toFixed(2);
-              deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
+              await deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
             }
 
           });
@@ -531,7 +545,7 @@ exports.onMeetingUpdate = functions.firestore.document('/meetings/{meetingId}')
       const originalData = change.before.data();
       const updatedData = change.after.data();
 
-      if(originalData.status == "cancelled" || originalData.status == "missed" ) {
+      if((originalData.status == "cancelled" || originalData.status == "missed") && ( updatedData.status !="cancelled" && updatedData.status !="missed") ) {
         admin.firestore().collection('meetings').doc(context.params.meetingId).update({"status": originalData.status });
       }
 
@@ -674,7 +688,7 @@ exports.makeMeeting = functions.firestore.document('/meetings/{meetingId}')
     astrologerData = userRef.data();
     admin.firestore().collection('meetings').doc(context.params.meetingId).update({"astrologerName": astrologerData.firstName, "astrologerImage": astrologerData.profilePicLink});
 
-    fcm_notification("token",astrologerData.tokens[astrologerData.tokens.length-1],"Meeting Request","You have a request for meeting",{"type": "meetingCreated"});
+    // fcm_notification("token",astrologerData.tokens[astrologerData.tokens.length-1],"Meeting Request","You have a request for meeting",{"type": "meetingCreated"});
 
   
   });
@@ -745,7 +759,7 @@ exports.makeAstrologer = functions.firestore.document('/astrologer/{astrologerId
 
         admin.firestore().collection('app_details').doc("astrologerDetails").collection("pricing_categories").doc(original['pricingCategory']).get().then((priceRef) => {
           priceData = priceRef.data();
-          admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({"priceChat":priceData.priceChat, "priceVoice":priceData.priceVoice, "priceVideo":priceData.priceVideo, "currentDiscount": priceData.currentDiscount });
+          admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({"priceChat":priceData.priceChat, "priceVoice":priceData.priceVoice, "priceVideo":priceData.priceVideo, "currentDiscount": priceData.currentDiscount, "liveChatPrice": priceData.liveChatPrice});
         });
 
       // const msg = {
@@ -1012,7 +1026,7 @@ exports.updateAstrologer = functions.firestore.document('/astrologer/{astrologer
 
         admin.firestore().collection('app_details').doc("astrologerDetails").collection("pricing_categories").doc(updatedData.pricingCategory).get().then((priceRef) => {
           priceData = priceRef.data();
-          admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({"priceChat":priceData.priceChat, "priceVoice":priceData.priceVoice, "priceVideo":priceData.priceVideo , "currentDiscount": priceData.currentDiscount });
+          admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({"priceChat":priceData.priceChat, "priceVoice":priceData.priceVoice, "priceVideo":priceData.priceVideo , "currentDiscount": priceData.currentDiscount, "liveChatPrice": priceData.liveChatPrice });
         });
 
       };
@@ -1135,14 +1149,13 @@ exports.updatePricingCategory = functions.firestore.document('/app_details/astro
       const updatedData = change.after.data();
       const _datarwt = [];
 
-      admin.firestore().collection('astrologer').get().then((astrologerSnap) => {
+    await admin.firestore().collection('astrologer').get().then((astrologerSnap) => {
         astrologerSnap.docs.map((doc)=> {
-          console.log(doc.ref.id);
           admin.firestore().collection('astrologer').doc(doc.ref.id).get().then((astrologerRef) => {
             astrologerData = astrologerRef.data();
             if(astrologerData.pricingCategory == context.params.pricingCategory )
             {
-             _datarwt.push( admin.firestore().collection('astrologer').doc(doc.ref.id).update({"priceChat":updatedData.priceChat, "priceVoice":updatedData.priceVoice, "priceVideo":updatedData.priceVideo }));
+             _datarwt.push( admin.firestore().collection('astrologer').doc(doc.ref.id).update({"priceChat":updatedData.priceChat, "priceVoice":updatedData.priceVoice, "priceVideo":updatedData.priceVideo, "currentDiscount": updatedData.currentDiscount, "liveChatPrice": updatedData.liveChatPrice }));
             }
       });
     });
@@ -1156,7 +1169,7 @@ exports.updatePricingCategory = functions.firestore.document('/app_details/astro
   });
 
 
-return exports.scheduledFunctionCrontab = functions.pubsub.schedule('00 00 * * *')
+exports.scheduledFunctionCrontab = functions.pubsub.schedule('00 00 * * *')
     .timeZone('Asia/Kolkata') // Users can choose timezone - default is America/Los_Angeles
     .onRun(async (context) =>  {
 
@@ -1246,3 +1259,23 @@ return exports.scheduledFunctionCrontab = functions.pubsub.schedule('00 00 * * *
     return _dataloaded;
 });
 
+
+
+exports.backupFirestore = functions.pubsub.schedule('02 10 * * *').onRun(async (context) => {
+  const projectId = "astrochrchafirebase"
+
+  const timestamp = new Date().toISOString()
+
+  console.log(`Start to backup project ${projectId}`)
+  console.log(key.client_email);
+
+  await authClient.authorize();
+  console.log("dvsdvs");
+  return firestoreClient.projects.databases.exportDocuments({
+      name: `projects/${projectId}/databases/(default)`,
+      requestBody: {
+          outputUriPrefix: `gs://astrochrcha-backup/backups/${timestamp}`
+      }
+  })
+
+});

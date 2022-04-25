@@ -1,0 +1,12 @@
+{
+  "type": "service_account",
+  "project_id": "astrochrchafirebase",
+  "private_key_id": "864e7a0f96eda96eb85ae406ffa4b308293cda81",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDJ3i3qNa39jKav\n4shlxQYsa9xvyiaOTO1pU2YyGtkC5URRLTvZtTIDavr7udV5I3NleLOsM6NDIEFQ\ngWc7bTQSzloxQ50HC6+2o/EvcpW6HV/nK68eX9rvE0iF3BdehWUwJ3/plAJlZQJZ\nxcQw0pmbYu0KCI1Wl0YoPitzIU9R7qkM1Wt+9SjE7sSWEJH+VRvzFjHDI9bfK8bP\n2Ti95iqkL+fxwQsA0TqboaiHe9+sGl/3bDT3x9Vza+BVdhD5cQx8v3EpAfNPfLgk\nlcH8qiLGg54Slx+Qx9+cvtmM+DnXiBYfBEMU4HSsOOlLk/p8M8+i5Q1hz4XXszpE\npIGC18e9AgMBAAECggEAANXJqVbMWC6F7yg/YaJmLyX0FWH5vEiUuXuI//vS1rDB\neDw+DL6xT1upYE/6FLTs69U87uYPTrmWuOqyDjLfL6gs0+skcDmDn8pjE0svFjhK\nBPRHASNgghu+TfrLdCPTfGwA0XR5AmXysoOB1OkF1RUvfd9nIQYtnFX0GTqsmCek\nWqoCXh9eLjfSOqqQRyJUxbisFk8vNge58v06zl3sYCNjyIBvKQwMbUryskixkDGZ\n6Hw5pHbtGLvMYwxIXgeVBidJoeRuiO5KjWCMKtGqE3nauh1zwAqOXO6uuGpk+VkH\nH5vhzv3m0NV3sq4IzKptsCipeBgJdKYP8nFJDy0JoQKBgQD1e7uGjIZ/GV2TDLNO\n+wAk3HOCFwBFNIji1F87cnJyKdT/cUpLZsiW2EGddT9J9ocLhQ4GFdYB0QLf+afU\nsqP0Frs7MDzDOqHf5C56xeZ6Mj4a7eqrRNgty5oVT4v7uiq7KIaOD3ncy7qkOe9V\n8q6sv9CTa9eCP+dZ74PpA9KxIQKBgQDShBtpbPos1AlIb+9EnCIObQ8ELlN+5OES\nZVLbdvwU4mgzm//rcodQQKOBNFUxDdY9MBE2dViKmCGrD0JOnxl1E+pFl2tEJRse\n7WaLql04oBZsgHiCTxeA/Xz6UXDFUCZ38FJ0kvfLAF+NYcVO4v08NhzYTLE/BJEl\nwU+LD1fXHQKBgQCYdkuGijpyL8/VJ3sp32w8eIpozl5FnRYzQtEOu8rmqqJ2L+eD\noweL4C4IXCx9hFZlSjLmhqNOp4BQmN6qlHSNgZyxawkh+4VT54USjVzSoee+k+s+\nidh1wNEm0SvQoNQvP0Eqc+QsxH9bxfumdr4T3mHtXXoQlB3c1ownqU8u4QKBgH3o\nT3DNog9/vhGaCRQTAfd42NtaTcv+XnMfMOBcGMbw5vu/GOCcPjwMfP5A65cMPI+a\nGSFmK8+wz6o81R6q35H7mEmJF7nJK6BiwstT2K+OZ/r7F5hwb5FRixc38GfC2U8w\n6FAauqOqlHu990GIV4dUognoTLZxJ9LZ/JYiVhotAoGBAOSxzrxi3cCFo77j39iz\nyPZb2tvat0rN3Z1VaUPGxBtWNcczklRS12YrQyU7WWYSNSMViDmNWi9kpsG8giwT\nT4srywIEuNRKI1xNY320pkaDwF2K5mNjcsERoVh8YEDw7l2vjgIWsp7uKWJv2YCq\n83NRvDdOMw/ifzxUK0/bryTO\n-----END PRIVATE KEY-----\n",
+  "client_email": "firebase-backup@astrochrchafirebase.iam.gserviceaccount.com",
+  "client_id": "115615527253978047647",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-backup%40astrochrchafirebase.iam.gserviceaccount.com"
+}
