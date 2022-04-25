@@ -109,18 +109,7 @@ function addMoneyToWallet(user, amount, orderID) {
   });
 }
 
-function addCashbackMoney(user, amount, orderID) {
-  // admin.firestore().collection('app_details').doc("money").get().then((moneyRef) => {
-
-  //   moneyData = moneyRef.data();
-  //   userAmount = amount * ((100) / (100 + moneyData.gst));
-  //   gst = amount - userAmount;
-  //   gst = gst.toFixed(2);
-  //   userAmount = userAmount.toFixed(2);
-
-  // console.log(gst);  
-  // console.log(userAmount);
-
+function addCashbackMoney(user, amount, orderID, cashbackName) {
   db.collection("app_details").doc("money").update({ "cashbackCount": admin.firestore.FieldValue.increment(1) });
   db.collection("app_details").doc("money").update({ "cashbackAmount": admin.firestore.FieldValue.increment(+amount) });
 
@@ -128,11 +117,18 @@ function addCashbackMoney(user, amount, orderID) {
     .doc(user)
     .update({ "walletBalance": admin.firestore.FieldValue.increment(+amount) });
 
+  db.collection("user")
+    .doc(user)
+    .update({ "rechargeCount": admin.firestore.FieldValue.increment(1) });
+
   db.collection('user')
     .doc(user)
     .collection("wallet_transaction")
     .add({ "subtypeId": orderID, "amount": +amount, "type": "credit", "subtype": "cashback", "date": admin.firestore.FieldValue.serverTimestamp() });
-  // });
+
+  db.collection('cashback')
+    .doc(cashbackName)
+    .update({ 'useCount': admin.firestore.FieldValue.increment(1) });
 }
 
 function updateAstrologerBalance2(astrologerId, astrologerAmount, subtypeId, subtype) {
