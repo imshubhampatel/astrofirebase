@@ -164,9 +164,9 @@ function addCashbackMoney(user, amount, orderID, cashbackName) {
     db.collection('cashback')
       .doc(cashbackName)
       .collection('uses').doc(userRef.id).get().then((cashbackDoc) => {
-        cashbackDoc.ref.update({
+        cashbackDoc.ref.set({
           totalCashback: cashbackDoc.data().totalCashback + amount,
-          useCount: cashbackDoc.data().useCount,
+          useCount: cashbackDoc.data().useCount + 1,
         });
       })
   });
