@@ -17,7 +17,7 @@ sgClient.setApiKey("SG.KuGn-gmER_eCmRr0INSJug.4UEZBrpEZu_fV6oQLNRjXfp3ejkPGznQE8
 
 const app = express();
 const main = express();
-const key = require("./service-key.json"); 
+const key = require("./service-key.json");
 
 const authClient = new googleapis.google.auth.JWT({
   email: key.client_email,
@@ -126,8 +126,13 @@ function addMoneyToWallet(user, amount, orderID) {
 }
 
 function addCashbackMoney(user, amount, orderID, cashbackName) {
-  db.collection("app_details").doc("money").update({ "cashbackCount": admin.firestore.FieldValue.increment(1) });
-  db.collection("app_details").doc("money").update({ "cashbackAmount": admin.firestore.FieldValue.increment(+amount) });
+  db.collection("app_details")
+    .doc("money")
+    .update({ "cashbackCount": admin.firestore.FieldValue.increment(1) });
+
+  db.collection("app_details")
+    .doc("money")
+    .update({ "cashbackAmount": admin.firestore.FieldValue.increment(+amount) });
 
   db.collection("user")
     .doc(user)
@@ -298,26 +303,26 @@ app.post('/updatetransaction/', async (req, res) => {
 
       var invoiceNo = 0
 
-        adminRef = admin.firestore().collection('app_details').doc('adminDetails');
-        await admin.firestore().runTransaction((transaction) => {
-          return transaction.get(adminRef).then((res) => {
-  
-              if (!res.exists) {
-                  throw "Document does not exist!";
-              }
-  
-              var newInvoiceNo = res.data().currentInvoiceNo + 1;
-              invoiceNo = newInvoiceNo;
-  
-              functions.logger.log(newInvoiceNo);
-  
-              transaction.update(adminRef, {
-                  "currentInvoiceNo": newInvoiceNo,
-              });
-  
+      adminRef = admin.firestore().collection('app_details').doc('adminDetails');
+      await admin.firestore().runTransaction((transaction) => {
+        return transaction.get(adminRef).then((res) => {
+
+          if (!res.exists) {
+            throw "Document does not exist!";
+          }
+
+          var newInvoiceNo = res.data().currentInvoiceNo + 1;
+          invoiceNo = newInvoiceNo;
+
+          functions.logger.log(newInvoiceNo);
+
+          transaction.update(adminRef, {
+            "currentInvoiceNo": newInvoiceNo,
           });
 
         });
+
+      });
 
 
       admin.firestore().collection('payments')
@@ -478,31 +483,28 @@ async function deductAmount(meetingAmount, meetingId, userId, res, time) {
   tuserRef = db.collection('user').doc(userId);
   success = false;
 
-    await admin.firestore().runTransaction((transaction) => {
-      return transaction.get(tuserRef).then((result) => {
+  await admin.firestore().runTransaction((transaction) => {
+    return transaction.get(tuserRef).then((result) => {
 
-          tuserData = result.data();
-          
-          if(tuserData.walletBalance<meetingAmount)
-            {
-              res.status(400).send(`{ "message" : "Insufficient balance" }`);
-            }
-          else 
-            {
-              transaction.update(tuserRef, {"walletBalance": admin.firestore.FieldValue.increment(-meetingAmount) });
-              success = true;
-              res.status(201).send(`{ "message" : "true" }`);
-            }
-      });
-    });
+      tuserData = result.data();
 
-    if(success)
-      {
-        admin.firestore().collection('meetings').doc(meetingId).update({ "totalAmount": admin.firestore.FieldValue.increment(+meetingAmount), "lastAmountDeduct": +meetingAmount, "totalDuration": admin.firestore.FieldValue.increment(+time) });
-        status2 = db.collection('user').doc(userId).collection("wallet_transaction").add({"subtypeId":meetingId,"amount":+meetingAmount,"type":"debit","subtype":"meeting","date":admin.firestore.FieldValue.serverTimestamp()});
+      if (tuserData.walletBalance < meetingAmount) {
+        res.status(400).send(`{ "message" : "Insufficient balance" }`);
       }
+      else {
+        transaction.update(tuserRef, { "walletBalance": admin.firestore.FieldValue.increment(-meetingAmount) });
+        success = true;
+        res.status(201).send(`{ "message" : "true" }`);
+      }
+    });
+  });
 
-    return;
+  if (success) {
+    admin.firestore().collection('meetings').doc(meetingId).update({ "totalAmount": admin.firestore.FieldValue.increment(+meetingAmount), "lastAmountDeduct": +meetingAmount, "totalDuration": admin.firestore.FieldValue.increment(+time) });
+    status2 = db.collection('user').doc(userId).collection("wallet_transaction").add({ "subtypeId": meetingId, "amount": +meetingAmount, "type": "debit", "subtype": "meeting", "date": admin.firestore.FieldValue.serverTimestamp() });
+  }
+
+  return;
 
 }
 
@@ -517,89 +519,80 @@ app.post('/deductAmount/', async (req, res) => {
     res.status(400).send(`{ "message" : "Required Parameters Missing" }`);
   }
 
-      console.log(meetingId);
-      db.collection('meetings').doc(meetingId).get().then(async (meetingRef) => {
-        meetingData = meetingRef.data();
-        db.collection('astrologer').doc(meetingData.astrologerUid).get().then(async (astrologerRef) => {
-            astrologerData = astrologerRef.data();
-          db.collection('user').doc(meetingData.userUid).get().then(async (userRef) => {
-            userData = userRef.data();
-            meetingRate = meetingData.consultationRate;
-            meetingAmount = meetingRate * time;
-            discount = 0;
+  console.log(meetingId);
+  db.collection('meetings').doc(meetingId).get().then(async (meetingRef) => {
+    meetingData = meetingRef.data();
+    db.collection('astrologer').doc(meetingData.astrologerUid).get().then(async (astrologerRef) => {
+      astrologerData = astrologerRef.data();
+      db.collection('user').doc(meetingData.userUid).get().then(async (userRef) => {
+        userData = userRef.data();
+        meetingRate = meetingData.consultationRate;
+        meetingAmount = meetingRate * time;
+        discount = 0;
 
-            if(meetingData.coupon != null && meetingData.coupon != "" )
-            {
-               db.collection('coupon').doc(meetingData.coupon).get().then(async (couponRef)=> {
-                  couponData = couponRef.data();
+        if (meetingData.coupon != null && meetingData.coupon != "") {
+          db.collection('coupon').doc(meetingData.coupon).get().then(async (couponRef) => {
+            couponData = couponRef.data();
 
-                  if(couponData !=null)
-                  {
-                  
-                      if(couponData.live && (couponData.categoryType==meetingData.type || couponData.categoryType == "all"))
-                      { 
-                        if(couponData.discountType == "percent")
-                        discount = (couponData.discount / 100) * meetingAmount;
-                        else
-                        discount = couponData.discount;
+            if (couponData != null) {
 
-                        if(discount > couponData.maxDiscount)
-                        {
-                          discount = couponData.maxDiscount;
-                        }
+              if (couponData.live && (couponData.categoryType == meetingData.type || couponData.categoryType == "all")) {
+                if (couponData.discountType == "percent")
+                  discount = (couponData.discount / 100) * meetingAmount;
+                else
+                  discount = couponData.discount;
 
-                        discount = discount.toFixed(2);
-
-                        db.collection('coupon').doc(meetingData.coupon).collection('uses').doc(meetingData.userUid).get().then(async (useRef)=> {
-                          useData = useRef.data();
-                          if(useData != null)
-                          { 
-                            if(useData.useCount<couponData.limit)
-                            {  
-                              if( (useData.totalDiscount + discount) > couponData.maxTotalDiscount)
-                                {
-                                  discount = couponData.maxTotalDiscount - useData.totalDiscount;
-                                  if(discount > meetingAmount)
-                                      discount = meetingAmount;
-                                }
-                              db.collection('coupon').doc(meetingData.coupon).collection('uses').doc(meetingData.userUid).update({"useCount": admin.firestore.FieldValue.increment(1) , "totalDiscount": admin.firestore.FieldValue.increment(+discount)});
-                            }
-                            else
-                            {
-                              discount = 0;
-                            }
-                            meetingAmount = meetingAmount - discount;
-                            meetingAmount = meetingAmount.toFixed(2);
-                            await deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
-                          }
-                          else 
-                            {
-                              db.collection('coupon').doc(meetingData.coupon).collection('uses').doc(meetingData.userUid).set({"useCount": 1 , "totalDiscount": +discount});
-                              meetingAmount = meetingAmount - discount;
-                              meetingAmount = meetingAmount.toFixed(2);
-                              await deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
-                          }
-                        });
-
-                      }
-                } 
-                else {
-                  meetingAmount = meetingAmount - discount;
-                  meetingAmount = meetingAmount.toFixed(2);
-                  await deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
+                if (discount > couponData.maxDiscount) {
+                  discount = couponData.maxDiscount;
                 }
-               });
-              }
-              else {
-                meetingAmount = meetingAmount - discount;
-                meetingAmount = meetingAmount.toFixed(2);
-                deductAmount(meetingAmount,meetingId,meetingData.userUid,res,time);
-              }
 
-            });
+                discount = discount.toFixed(2);
 
+                db.collection('coupon').doc(meetingData.coupon).collection('uses').doc(meetingData.userUid).get().then(async (useRef) => {
+                  useData = useRef.data();
+                  if (useData != null) {
+                    if (useData.useCount < couponData.limit) {
+                      if ((useData.totalDiscount + discount) > couponData.maxTotalDiscount) {
+                        discount = couponData.maxTotalDiscount - useData.totalDiscount;
+                        if (discount > meetingAmount)
+                          discount = meetingAmount;
+                      }
+                      db.collection('coupon').doc(meetingData.coupon).collection('uses').doc(meetingData.userUid).update({ "useCount": admin.firestore.FieldValue.increment(1), "totalDiscount": admin.firestore.FieldValue.increment(+discount) });
+                    }
+                    else {
+                      discount = 0;
+                    }
+                    meetingAmount = meetingAmount - discount;
+                    meetingAmount = meetingAmount.toFixed(2);
+                    await deductAmount(meetingAmount, meetingId, meetingData.userUid, res, time);
+                  }
+                  else {
+                    db.collection('coupon').doc(meetingData.coupon).collection('uses').doc(meetingData.userUid).set({ "useCount": 1, "totalDiscount": +discount });
+                    meetingAmount = meetingAmount - discount;
+                    meetingAmount = meetingAmount.toFixed(2);
+                    await deductAmount(meetingAmount, meetingId, meetingData.userUid, res, time);
+                  }
+                });
+
+              }
+            }
+            else {
+              meetingAmount = meetingAmount - discount;
+              meetingAmount = meetingAmount.toFixed(2);
+              await deductAmount(meetingAmount, meetingId, meetingData.userUid, res, time);
+            }
           });
-        });
+        }
+        else {
+          meetingAmount = meetingAmount - discount;
+          meetingAmount = meetingAmount.toFixed(2);
+          deductAmount(meetingAmount, meetingId, meetingData.userUid, res, time);
+        }
+
+      });
+
+    });
+  });
 
 });
 
@@ -687,9 +680,9 @@ exports.onMeetingUpdate = functions.firestore.document('/meetings/{meetingId}')
     const originalData = change.before.data();
     const updatedData = change.after.data();
 
-      if((originalData.status == "cancelled" || originalData.status == "missed") && ( updatedData.status !="cancelled" && updatedData.status !="missed") ) {
-        admin.firestore().collection('meetings').doc(context.params.meetingId).update({"status": originalData.status });
-      }
+    if ((originalData.status == "cancelled" || originalData.status == "missed") && (updatedData.status != "cancelled" && updatedData.status != "missed")) {
+      admin.firestore().collection('meetings').doc(context.params.meetingId).update({ "status": originalData.status });
+    }
 
     if (originalData.status == "accepted" && updatedData.status == "ongoing") {
       // console.log("Ongoing notification");
@@ -814,7 +807,7 @@ exports.makeMeeting = functions.firestore.document('/meetings/{meetingId}')
       astrologerData = userRef.data();
       admin.firestore().collection('meetings').doc(context.params.meetingId).update({ "astrologerName": astrologerData.firstName, "astrologerImage": astrologerData.profilePicLink });
 
-    // fcm_notification("token",astrologerData.tokens[astrologerData.tokens.length-1],"Meeting Request","You have a request for meeting",{"type": "meetingCreated"});
+      // fcm_notification("token",astrologerData.tokens[astrologerData.tokens.length-1],"Meeting Request","You have a request for meeting",{"type": "meetingCreated"});
 
 
     });
@@ -882,10 +875,10 @@ exports.makeAstrologer = functions.firestore.document('/astrologer/{astrologerId
     // const writeResult = await admin.firestore().collection('security_groups').doc('astrologer').collection('astrologer').doc(context.params.astrologerId).set({"name": original});
     const ref = await admin.firestore().collection('app_details').doc("astrologerDetails").update({ "astrologerCount": admin.firestore.FieldValue.increment(1) });
 
-        admin.firestore().collection('app_details').doc("astrologerDetails").collection("pricing_categories").doc(original['pricingCategory']).get().then((priceRef) => {
-          priceData = priceRef.data();
-          admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({"priceChat":priceData.priceChat, "priceVoice":priceData.priceVoice, "priceVideo":priceData.priceVideo, "currentDiscount": priceData.currentDiscount, "liveChatPrice": priceData.liveChatPrice});
-        });
+    admin.firestore().collection('app_details').doc("astrologerDetails").collection("pricing_categories").doc(original['pricingCategory']).get().then((priceRef) => {
+      priceData = priceRef.data();
+      admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({ "priceChat": priceData.priceChat, "priceVoice": priceData.priceVoice, "priceVideo": priceData.priceVideo, "currentDiscount": priceData.currentDiscount, "liveChatPrice": priceData.liveChatPrice });
+    });
 
     // const msg = {
     //   from: 'astrochrchatech@gmail.com', // Something like: Jane Doe <janedoe@gmail.com>
@@ -1147,10 +1140,10 @@ exports.updateAstrologer = functions.firestore.document('/astrologer/{astrologer
 
     if (originalData.pricingCategory != updatedData.pricingCategory) {
 
-        admin.firestore().collection('app_details').doc("astrologerDetails").collection("pricing_categories").doc(updatedData.pricingCategory).get().then((priceRef) => {
-          priceData = priceRef.data();
-          admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({"priceChat":priceData.priceChat, "priceVoice":priceData.priceVoice, "priceVideo":priceData.priceVideo , "currentDiscount": priceData.currentDiscount, "liveChatPrice": priceData.liveChatPrice });
-        });
+      admin.firestore().collection('app_details').doc("astrologerDetails").collection("pricing_categories").doc(updatedData.pricingCategory).get().then((priceRef) => {
+        priceData = priceRef.data();
+        admin.firestore().collection('astrologer').doc(context.params.astrologerId).update({ "priceChat": priceData.priceChat, "priceVoice": priceData.priceVoice, "priceVideo": priceData.priceVideo, "currentDiscount": priceData.currentDiscount, "liveChatPrice": priceData.liveChatPrice });
+      });
 
     };
 
@@ -1258,33 +1251,32 @@ exports.updateWalletWithdrawal = functions.firestore.document('/wallet_withdrawa
   });
 
 exports.updatePricingCategory = functions.firestore.document('/app_details/astrologerDetails/pricing_categories/{pricingCategory}')
-    .onUpdate(async (change, context) => {
+  .onUpdate(async (change, context) => {
 
-      const updatedData = change.after.data();
-      const _datarwt = [];
+    const updatedData = change.after.data();
+    const _datarwt = [];
 
     await admin.firestore().collection('astrologer').get().then(async (astrologerSnap) => {
-        astrologerSnap.docs.map((doc)=> {
-          admin.firestore().collection('astrologer').doc(doc.ref.id).get().then((astrologerRef) => {
-            astrologerData = astrologerRef.data();
-            if(astrologerData.pricingCategory == context.params.pricingCategory )
-            {
-             _datarwt.push( admin.firestore().collection('astrologer').doc(doc.ref.id).update({"priceChat":updatedData.priceChat, "priceVoice":updatedData.priceVoice, "priceVideo":updatedData.priceVideo, "currentDiscount": updatedData.currentDiscount, "liveChatPrice": updatedData.liveChatPrice }));
-            }
+      astrologerSnap.docs.map((doc) => {
+        admin.firestore().collection('astrologer').doc(doc.ref.id).get().then((astrologerRef) => {
+          astrologerData = astrologerRef.data();
+          if (astrologerData.pricingCategory == context.params.pricingCategory) {
+            _datarwt.push(admin.firestore().collection('astrologer').doc(doc.ref.id).update({ "priceChat": updatedData.priceChat, "priceVoice": updatedData.priceVoice, "priceVideo": updatedData.priceVideo, "currentDiscount": updatedData.currentDiscount, "liveChatPrice": updatedData.liveChatPrice }));
+          }
+        });
+
       });
 
+      const _dataloaded = await Promise.all(_datarwt);
+
+      return _dataloaded;
+
     });
-
-    const _dataloaded = await Promise.all(_datarwt);
-
-    return _dataloaded;
-
   });
-});
 
 exports.scheduledFunctionCrontab = functions.pubsub.schedule('00 00 * * *')
-    .timeZone('Asia/Kolkata') // Users can choose timezone - default is America/Los_Angeles
-    .onRun(async (context) =>  {
+  .timeZone('Asia/Kolkata') // Users can choose timezone - default is America/Los_Angeles
+  .onRun(async (context) => {
 
     //   admin.firestore().collection('astrologer').get().then((astrologerSnap) => {
     //     astrologerDocs = astrologerSnap.docs;
@@ -1379,10 +1371,10 @@ exports.backupFirestore = functions.pubsub.schedule('02 10 * * *').onRun(async (
   await authClient.authorize();
   console.log("dvsdvs");
   return firestoreClient.projects.databases.exportDocuments({
-      name: `projects/${projectId}/databases/(default)`,
-      requestBody: {
-          outputUriPrefix: `gs://astrochrcha-backup/backups/${timestamp}`
-      }
+    name: `projects/${projectId}/databases/(default)`,
+    requestBody: {
+      outputUriPrefix: `gs://astrochrcha-backup/backups/${timestamp}`
+    }
   });
 
 });
