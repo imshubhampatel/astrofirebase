@@ -160,14 +160,16 @@ function addCashbackMoney(user, amount, orderID, cashbackName) {
 
   console.log('entry 6');
 
-  db.collection('cashback')
-    .doc(cashbackName)
-    .collection('uses').doc(user.uid).get().then((cashbackDoc) => {
-      cashbackDoc.ref.update({
-        totalCashback: cashbackDoc.data().totalCashback + amount,
-        useCount: cashbackDoc.data().useCount,
-      });
-    })
+  db.collection('user').doc(user).get().then((userRef) => {
+    db.collection('cashback')
+      .doc(cashbackName)
+      .collection('uses').doc(userRef.id).get().then((cashbackDoc) => {
+        cashbackDoc.ref.update({
+          totalCashback: cashbackDoc.data().totalCashback + amount,
+          useCount: cashbackDoc.data().useCount,
+        });
+      })
+  });
 
   console.log('entry 7');
 
