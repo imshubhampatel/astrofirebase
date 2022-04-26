@@ -126,26 +126,39 @@ function addMoneyToWallet(user, amount, orderID) {
 }
 
 function addCashbackMoney(user, amount, orderID, cashbackName) {
+
+  console.log('entry 1');
+
   db.collection("app_details")
     .doc("money")
     .update({ "cashbackCount": admin.firestore.FieldValue.increment(1) });
+
+  console.log('entry 2');
 
   db.collection("app_details")
     .doc("money")
     .update({ "cashbackAmount": admin.firestore.FieldValue.increment(+amount) });
 
+  console.log('entry 3');
+
   db.collection("user")
     .doc(user)
     .update({ "walletBalance": admin.firestore.FieldValue.increment(+amount) });
+
+  console.log('entry 4');
 
   db.collection("user")
     .doc(user)
     .update({ "rechargeCount": admin.firestore.FieldValue.increment(1) });
 
+  console.log('entry 5');
+
   db.collection('user')
     .doc(user)
     .collection("wallet_transaction")
     .add({ "subtypeId": orderID, "amount": +amount, "type": "credit", "subtype": "cashback", "date": admin.firestore.FieldValue.serverTimestamp() });
+
+  console.log('entry 6');
 
   db.collection('cashback')
     .doc(cashbackName)
@@ -155,6 +168,8 @@ function addCashbackMoney(user, amount, orderID, cashbackName) {
         useCount: cashbackDoc.data().useCount,
       });
     })
+
+  console.log('entry 7');
 
   db.collection('cashback')
     .doc(cashbackName)
@@ -400,7 +415,10 @@ app.post('/updatetransaction_v2/', async (req, res) => {
       if (req.body['CASHBACK_ID'] != '') {
         db.collection('cashback')
           .doc(req.body['CASHBACK_ID']).get().then((cashbackRef) => {
-            addCashbackMoney(paymentData.user, cashbackRef.data().cashback, req.body['ORDERID'])
+            addCashbackMoney(paymentData.user,
+              cashbackRef.data().cashback,
+              req.body['ORDERID'],
+              req.body['CASHBACK_ID'])
           });
       }
 
