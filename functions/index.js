@@ -498,10 +498,8 @@ app.post('/updatetransaction_v2/', async (req, res) => {
 
 async function deductAmount(meetingAmount, meetingId, userId, res, time) {
 
-  admin.firestore().collection('meetings').doc(meetingId).update({ "totalAmount": admin.firestore.FieldValue.increment(+meetingAmount), "lastAmountDeduct": +meetingAmount, "totalDuration": admin.firestore.FieldValue.increment(time) });
-
-  tuserRef = db.collection('user').doc(userId);
-  success = false;
+  let tuserRef = db.collection('user').doc(userId);
+  let success = false;
 
   await admin.firestore().runTransaction((transaction) => {
     return transaction.get(tuserRef).then((result) => {
