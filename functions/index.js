@@ -404,12 +404,12 @@ app.post('/updatetransaction_v2/', async (req, res) => {
     /* checksum that we need to verify */
     var paytmChecksum = req.body['CHECKSUMHASH'];
 
-    var isVerifySignature = PaytmChecksum.verifySignature(JSON.stringify(body), PAYTM_MKEY, paytmChecksum);
-    if (isVerifySignature) {
-      console.log("Checksum Matched");
-    } else {
-      console.log("Checksum Mismatched");
-    }
+    // var isVerifySignature = PaytmChecksum.verifySignature(JSON.stringify(body), PAYTM_MKEY, paytmChecksum);
+    // if (isVerifySignature) {
+    //   console.log("Checksum Matched");
+    // } else {
+    //   console.log("Checksum Mismatched");
+    // }
 
     if (req.body['STATUS'] == 'TXN_SUCCESS') {
       addMoneyToWallet(paymentData.user, req.body['TXNAMOUNT'], req.body['ORDERID']);
