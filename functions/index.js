@@ -520,6 +520,12 @@ async function deductAmount(meetingAmount, meetingId, userId, res, time) {
   if (success) {
     admin.firestore().collection('meetings').doc(meetingId).update({ "totalAmount": admin.firestore.FieldValue.increment(+meetingAmount), "lastAmountDeduct": +meetingAmount, "totalDuration": admin.firestore.FieldValue.increment(+time) });
     status2 = db.collection('user').doc(userId).collection("wallet_transaction").add({ "subtypeId": meetingId, "amount": +meetingAmount, "type": "debit", "subtype": "meeting", "date": admin.firestore.FieldValue.serverTimestamp() });
+    admin.firestore().collection('meetings').doc(meetingId).get().then(async (meetingRef) => {
+      data = meetingRef.data()
+      if (data.status=="Initiated") {
+        admin.firestore().collection('meetings').doc(meetingId).update({ "status": "accepted" });
+      }
+    });
   }
 
   return;
