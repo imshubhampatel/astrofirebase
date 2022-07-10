@@ -18,6 +18,7 @@ sgClient.setApiKey("SG.KuGn-gmER_eCmRr0INSJug.4UEZBrpEZu_fV6oQLNRjXfp3ejkPGznQE8
 const app = express();
 const main = express();
 const key = require("./service-key.json");
+const { default: handleKnowlarityCall } = require("./knowlarity");
 
 const authClient = new googleapis.google.auth.JWT({
   email: key.client_email,
@@ -220,6 +221,10 @@ function updateMeetingMetrics(astrologerId, userId, totalDuration, type) {
   }
 }
 
+app.post('/know_call', async (req, response) => {
+  handleKnowlarityCall(req);
+});
+
 app.post('/intiatetransaction/', async (req, response) => {
   if (
     req.body &&
@@ -347,7 +352,7 @@ app.post('/updatetransaction/', async (req, res) => {
         .update({ "invoiceNo": +invoiceNo, "status": req.body['STATUS'], "txnId": req.body['TXNID'] });
 
       admin.firestore().collection('app_details').doc("money").get().then((moneyRef) => {
-        moneyData = moneyRef.data();
+        let moneyData = moneyRef.data();
         var userAmount = amount * ((100) / (100 + moneyData.gst));
         var gst = amount - userAmount;
         gst = gst.toFixed(2);
