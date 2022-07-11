@@ -1,0 +1,15 @@
+{
+  "dependencies": {
+    "@sendgrid/mail": "^7.6.2",
+    "agora-access-token": "^2.0.4",
+    "axios": "^0.26.1",
+    "body-parser": "^1.20.0",
+    "cors": "^2.8.5",
+    "express": "^4.17.3",
+    "firebase-admin": "^10.0.2",
+    "firebase-functions": "^3.22.0",
+    "googleapis": "^100.0.0",
+    "paytmchecksum": "^1.5.0",
+    "sendgrid": "^5.2.3"
+  }
+}
