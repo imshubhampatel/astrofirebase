@@ -808,6 +808,66 @@ app.get('/getAgoraToken/', async (req, res) => {
 
 })
 
+app.post("/calling-status", async (req, res) => {
+  let data = req.body;
+
+  let {
+    callUniqueId,
+    agentNumber,
+    customerNumber,
+    callStatus,
+    recordingUrl,
+    callDuration,
+    callDateAndTime,
+    knowlarityNumber,
+  } = data;
+
+  if (
+    !callUniqueId ||
+    !agentNumber ||
+    !customerNumber ||
+    !callStatus ||
+    !callDateAndTime ||
+    !callDuration ||
+    !knowlarityNumber ||
+    !recordingUrl
+  ) {
+    return res.status(400).json({
+      success: false,
+      missingFields: [
+        !callUniqueId && "CallUniqueId",
+        !agentNumber && "agentNumber",
+        !customerNumber && "customerNumber",
+        !callStatus && "callStatus",
+        !callDateAndTime && "callDateAndTime",
+        !callDuration && "callDuration",
+        !knowlarityNumber && "knowlarityNumber",
+        !recordingUrl && "recordingUrl",
+      ].filter((field) => field !== false),
+      message: "Please send all the neccessary parameters",
+    });
+  }
+  try {
+    let staticsRef = await admin
+      .firestore()
+      .collection("knowlarity_statics")
+      .add(data);
+
+    return res
+      .status(201)
+      .json({ success: true, message: "Calling status document created !" });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: "Something went wrong", error });
+  }
+});
+
+exports.onKnowlarityUpdate = functions.firestore
+  .document("/knowlarity_statics/{callingStatsId}")
+  .onCreate(async (snap, context) => {
+    let newValue = snap.data();
+    console.log("values", newValue.agentNumber);
+  });
 const db = admin.firestore();
 sgMail.setApiKey(
   "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"
