@@ -2157,3 +2157,42 @@ exports.backupFirestore = functions.pubsub
     });
   });
 //# sourceMappingURL=index.js.map
+exports.makeCall = functions.https.onRequest(async (req, res) => {
+  let { customerNumber, agentNumber } = req.body;
+
+  try {
+    let result = await initiateCall(customerNumber, agentNumber);
+    console.log(result);
+  } catch (error) {
+    console.log(error);
+  }
+  return res.send("hiii");
+});
+
+function initiateCall(contactValues) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      let config = {
+        method: "post",
+        url: "https://kpi.knowlarity.com/Basic/v1/account/call/makecall",
+        headers: {
+          "x-api-key": "6m9Ux0on1k1opZ1qyEZMr4cl29UfAPqK2rryZCZR",
+          Authorization: "2209623c-769e-4c1d-9f16-e0736c4e964e",
+          "content-type": "application/json",
+        },
+        data: {
+          customer_number: "+919389112183",
+          agent_number: "+918273152153",
+          k_number: "+917353000782",
+          caller_id: "+918035240820",
+          additional_params: { total_call_duration: 15 },
+        },
+      };
+      let response = await axios(config);
+      resolve(response.data);
+    } catch (error) {
+      reject(error.response.data || error.message.data || error.message);
+      console.log(error);
+    }
+  });
+}
