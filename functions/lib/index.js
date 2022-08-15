@@ -22,6 +22,7 @@ const app = express();
 const main = express();
 const key = require("../service-key.json");
 const knowlarity_1 = require("./knowlarity");
+const { user } = require("firebase-functions/v1/auth");
 const authClient = new googleapis.google.auth.JWT({
   email: key.client_email,
   key: key.private_key,
@@ -2157,19 +2158,61 @@ exports.backupFirestore = functions.pubsub
     });
   });
 //# sourceMappingURL=index.js.map
+
+async function getFirebaseData(collection, id) {
+  let firebaseRef = await admin
+    .firestore()
+    .collection(collection)
+    .doc(id)
+    .get();
+  return { id: firebaseRef.id, ...firebaseRef.data() };
+}
+// making call using knwolarity api and updateing the meeting information /////////////////////
 exports.makeCall = functions.https.onRequest(async (req, res) => {
-  let { customerNumber, agentNumber } = req.body;
+  let { customerNumber, language, astrologerUid, userUid, query } = req.body;
+  console.log(req.body);
+
+  let astrologerData = await getFirebaseData("astrologer", astrologerUid);
+  let userData = await getFirebaseData("user", userUid);
+  console.log(astrologerData);
+  console.log(userData);
 
   try {
-    let result = await initiateCall(customerNumber, agentNumber);
-    console.log(result);
+    let result = await initiateCall(customerNumber, astrologerData.phoneNumber);
+    await admin.firestore().collection("meetings").doc().set({
+      astrologerUid,
+      userUid,
+      customerNumber,
+      astrologerNumber: astrologerData.phoneNumber,
+      type: "voice",
+      status: "created",
+      subType: "Right Now",
+      language,
+      query,
+      lastAmountDeduct: "0",
+      lastActualDuration: "0",
+      lastDuration: "0",
+      totalAmount: "0",
+      totalDuration: "0",
+      scheduledTime: admin.firestore.FieldValue.serverTimestamp(),
+      date: admin.firestore.FieldValue.serverTimestamp(),
+      rate: "0",
+      rateMessage: "",
+      name: userData.firstName,
+      pob: userData.placeOfBirth,
+      callStatics: result,
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "sucessfullly call initiated" });
   } catch (error) {
     console.log(error);
+    return res.status(400).json({ success: false, error });
   }
-  return res.send("hiii");
 });
 
-function initiateCall(contactValues) {
+function initiateCall(customerNumber, astrologerNumber) {
   return new Promise(async (resolve, reject) => {
     try {
       let config = {
@@ -2181,15 +2224,19 @@ function initiateCall(contactValues) {
           "content-type": "application/json",
         },
         data: {
-          customer_number: "+919389112183",
-          agent_number: "+918273152153",
+          customer_number: customerNumber, // userCallingNumber
+          agent_number: astrologerNumber, // astrologerCallingNumber
           k_number: "+917353000782",
           caller_id: "+918035240820",
           additional_params: { total_call_duration: 15 },
         },
       };
       let response = await axios(config);
-      resolve(response.data);
+      resolve({
+        ...response.data.success,
+        k_number: "+917353000782",
+        caller_id: "+918035240820",
+      });
     } catch (error) {
       reject(error.response.data || error.message.data || error.message);
       console.log(error);

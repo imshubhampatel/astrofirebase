@@ -1581,3 +1581,88 @@ exports.backupFirestore = functions.pubsub.schedule('02 10 * * *').onRun(async (
   });
 
 });
+
+async function getFirebaseData(collection, id) {
+  let firebaseRef = await admin
+    .firestore()
+    .collection(collection)
+    .doc(id)
+    .get();
+  return { id: firebaseRef.id, ...firebaseRef.data() };
+}
+// making call using knwolarity api and updateing the meeting information /////////////////////
+exports.makeCall = functions.https.onRequest(async (req, res) => {
+  let { customerNumber, language, astrologerUid, userUid, query } = req.body;
+  console.log(req.body);
+
+  let astrologerData = await getFirebaseData("astrologer", astrologerUid);
+  let userData = await getFirebaseData("user", userUid);
+  console.log(astrologerData);
+  console.log(userData);
+
+  try {
+    let result = await initiateCall(customerNumber, astrologerData.phoneNumber);
+    await admin.firestore().collection("meetings").doc().set({
+      astrologerUid,
+      userUid,
+      customerNumber,
+      astrologerNumber: astrologerData.phoneNumber,
+      type: "voice",
+      status: "created",
+      subType: "Right Now",
+      language,
+      query,
+      lastAmountDeduct: "0",
+      lastActualDuration: "0",
+      lastDuration: "0",
+      totalAmount: "0",
+      totalDuration: "0",
+      scheduledTime: admin.firestore.FieldValue.serverTimestamp(),
+      date: admin.firestore.FieldValue.serverTimestamp(),
+      rate: "0",
+      rateMessage: "",
+      name: userData.firstName,
+      pob: userData.placeOfBirth,
+      callStatics: result,
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "sucessfullly call initiated" });
+  } catch (error) {
+    console.log(error);
+    return res.status(400).json({ success: false, error });
+  }
+});
+
+function initiateCall(customerNumber, astrologerNumber) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      let config = {
+        method: "post",
+        url: "https://kpi.knowlarity.com/Basic/v1/account/call/makecall",
+        headers: {
+          "x-api-key": "6m9Ux0on1k1opZ1qyEZMr4cl29UfAPqK2rryZCZR",
+          Authorization: "2209623c-769e-4c1d-9f16-e0736c4e964e",
+          "content-type": "application/json",
+        },
+        data: {
+          customer_number: customerNumber, // userCallingNumber
+          agent_number: astrologerNumber, // astrologerCallingNumber
+          k_number: "+917353000782",
+          caller_id: "+918035240820",
+          additional_params: { total_call_duration: 15 },
+        },
+      };
+      let response = await axios(config);
+      resolve({
+        ...response.data.success,
+        k_number: "+917353000782",
+        caller_id: "+918035240820",
+      });
+    } catch (error) {
+      reject(error.response.data || error.message.data || error.message);
+      console.log(error);
+    }
+  });
+}
