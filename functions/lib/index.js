@@ -6,19 +6,23 @@ const googleapis = require("googleapis");
 const admin = require("firebase-admin");
 const PaytmChecksum = require("paytmchecksum");
 const sgMail = require("@sendgrid/mail");
-const cors = require("cors")({
-  origin: true,
-});
 const { RtcTokenBuilder, RtcRole } = require("agora-access-token");
 const express = require("express");
 const bodyParser = require("body-parser");
+const Razorpay = require("razorpay");
+const request = require("request");
+const shortId = require("shortid");
 var axios = require("axios");
+
 admin.initializeApp();
 const sgClient = require("@sendgrid/client");
 sgClient.setApiKey(
   "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"
 );
 const app = express();
+const cors = require("cors")({
+  origin: true,
+});
 const main = express();
 const key = require("../service-key.json");
 const knowlarity_1 = require("./knowlarity");
@@ -35,6 +39,7 @@ const firestoreClient = googleapis.google.firestore({
   version: "v1beta2",
   auth: authClient,
 });
+app.use(cors);
 main.use("/api/", app);
 main.use(bodyParser.json());
 main.use(bodyParser.urlencoded({ extended: false }));
@@ -79,6 +84,58 @@ function fcm_notification(type, topic_or_token_id, title, body, data_body) {
       return { error: error.code };
     });
 }
+
+async function updateUserWalletBalance(meetingAmount, meetingId, userId, time) {
+  let tuserRef = db.collection("user").doc(userId);
+  let success = false;
+  await admin.firestore().runTransaction((transaction) => {
+    return transaction.get(tuserRef).then((result) => {
+      tuserData = result.data();
+      transaction.update(tuserRef, {
+        walletBalance: admin.firestore.FieldValue.increment(-meetingAmount),
+      });
+      success = true;
+    });
+  });
+  if (success) {
+    admin
+      .firestore()
+      .collection("meetings")
+      .doc(meetingId)
+      .update({
+        totalAmount: admin.firestore.FieldValue.increment(+meetingAmount),
+        lastAmountDeduct: +meetingAmount,
+        totalDuration: admin.firestore.FieldValue.increment(+time),
+      });
+    let status2 = db
+      .collection("user")
+      .doc(userId)
+      .collection("wallet_transaction")
+      .add({
+        subtypeId: meetingId,
+        amount: +meetingAmount,
+        type: "debit",
+        subtype: "meeting",
+        date: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    admin
+      .firestore()
+      .collection("meetings")
+      .doc(meetingId)
+      .get()
+      .then(async (meetingRef) => {
+        let data = meetingRef.data();
+        if (data.status == "Initiated") {
+          admin
+            .firestore()
+            .collection("meetings")
+            .doc(meetingId)
+            .update({ status: "accepted" });
+        }
+      });
+  }
+  return;
+}
 function updateAstrologerBalance(
   astrologerId,
   totalAmount,
@@ -91,10 +148,10 @@ function updateAstrologerBalance(
     .doc("money")
     .get()
     .then((moneyRef) => {
-      moneyData = moneyRef.data();
-      astrologerAmount = totalAmount * ((100 - moneyData.commission) / 100);
+      let moneyData = moneyRef.data();
+      let astrologerAmount = totalAmount * ((100 - moneyData.commission) / 100);
       astrologerAmount = astrologerAmount.toFixed(2);
-      status1 = db
+      let status1 = db
         .collection("astrologer")
         .doc(astrologerId)
         .collection("privateInfo")
@@ -104,7 +161,7 @@ function updateAstrologerBalance(
             +astrologerAmount
           ),
         });
-      status = db
+      let status = db
         .collection("astrologer")
         .doc(astrologerId)
         .collection("privateInfo")
@@ -112,7 +169,7 @@ function updateAstrologerBalance(
         .update({
           earnings: admin.firestore.FieldValue.increment(+astrologerAmount),
         });
-      status2 = db
+      let status2 = db
         .collection("astrologer")
         .doc(astrologerId)
         .collection("astologer_wallet_transaction")
@@ -123,7 +180,7 @@ function updateAstrologerBalance(
           subtype: subtype,
           date: admin.firestore.FieldValue.serverTimestamp(),
         });
-      adminAmount = totalAmount - astrologerAmount;
+      let adminAmount = totalAmount - astrologerAmount;
       db.collection("app_details")
         .doc("money")
         .update({
@@ -150,6 +207,7 @@ function updateAstrologerBalance(
       }
     });
 }
+
 function addMoneyToWallet(user, amount, orderID) {
   admin
     .firestore()
@@ -433,6 +491,76 @@ app.post("/intiatetransaction/", async (req, response) => {
       });
   } else {
     response.status(401).send('{"message": "Invalid Data"}');
+  }
+});
+// http://localhost:5001/astrochrchafirebase/us-central1/webApi/api/intiatetransaction_razorypay
+
+app.post("/intiatetransaction_razorypay/", async (req, res) => {
+  const instance = new Razorpay({
+    key_id: "rzp_test_FuZPDTFdRxeNou",
+    key_secret: "MezhnZ5AHkmOsBbK8iCd8TfH",
+  });
+
+  const payment_capture = 0;
+  // const amount = req.body.amount;
+  const currency = "INR";
+  try {
+    const options = {
+      amount: (499 * 100).toString(),
+      currency,
+      receipt: shortId.generate(),
+      payment_capture,
+    };
+    instance.orders.create(options, async function (err, order) {
+      if (err) {
+        return res.status(500).json({
+          message: "Something Went Wrong",
+        });
+      }
+      return res.status(200).json(order);
+    });
+  } catch (err) {
+    return res.status(500).json({
+      message: "Something Went Wrong",
+    });
+  }
+});
+
+app.post("/razor_capture/:paymentId", (req, res) => {
+  let config = {
+    RAZOR_PAY_KEY_ID: "rzp_test_FuZPDTFdRxeNou",
+    RAZOR_PAY_KEY_SECRET: "MezhnZ5AHkmOsBbK8iCd8TfH",
+  };
+  console.log("called");
+  try {
+    return request(
+      {
+        method: "POST",
+        url: `https://${config.RAZOR_PAY_KEY_ID}:${config.RAZOR_PAY_KEY_SECRET}@api.razorpay.com/v1/payments/${req.params.paymentId}/capture`,
+        form: {
+          amount: 499 * 100, // amount == Rs 499 // Same As Order amount
+          currency: "INR",
+        },
+      },
+      async function (err, response, body) {
+        if (err) {
+          console.log("error");
+          return res.status(500).json({
+            message: "Something Went Wrong",
+          });
+        }
+        console.log("hurrah");
+        console.log("Status:", response.statusCode);
+        console.log("Headers:", JSON.stringify(response.headers));
+        console.log("Response:", body);
+        return res.status(200).json(body);
+      }
+    );
+  } catch (err) {
+    console.log("error found", err);
+    return res.status(500).json({
+      message: "Something Went Wrong",
+    });
   }
 });
 app.post("/refund/", async (req, res) => {
@@ -858,7 +986,7 @@ async function deductAmount(meetingAmount, meetingId, userId, res, time) {
         lastAmountDeduct: +meetingAmount,
         totalDuration: admin.firestore.FieldValue.increment(+time),
       });
-    status2 = db
+    let status2 = db
       .collection("user")
       .doc(userId)
       .collection("wallet_transaction")
@@ -875,7 +1003,7 @@ async function deductAmount(meetingAmount, meetingId, userId, res, time) {
       .doc(meetingId)
       .get()
       .then(async (meetingRef) => {
-        data = meetingRef.data();
+        let data = meetingRef.data();
         if (data.status == "Initiated") {
           admin
             .firestore()
@@ -1112,6 +1240,115 @@ app.get("/getAgoraToken/", async (req, res) => {
   res.status(200).send(token);
 });
 
+let checkNum = function (num) {
+  let isValid = num.includes("+91");
+  if (!isValid) {
+    num = "+91" + num;
+    return num;
+  }
+  return num;
+};
+function getUserActualAmout(amout) {
+  let actualAmout = Math.floor(amout);
+  actualAmout = "" + actualAmout;
+  actualAmout = [...actualAmout];
+  console.log(actualAmout);
+  actualAmout[actualAmout.length - 1] = "0";
+  actualAmout = actualAmout.join("");
+  actualAmout = parseInt(actualAmout);
+  return actualAmout;
+}
+app.post("/make-call", async (req, res) => {
+  console.log("hey");
+  let {
+    customerNumber,
+    language,
+    astrologerUid,
+    userUid,
+    query,
+    firstName,
+    lastName,
+    timeOfBirth,
+    placeOfBirth,
+    dateOfBirth,
+  } = req.body;
+  console.log(req.body);
+  try {
+    let astrologerData = await getFirebaseData("astrologer", astrologerUid);
+    console.log(astrologerData);
+    let userData = await getFirebaseData("user", userUid);
+
+    let priceVoice = astrologerData.priceVoice; // 100
+    let userWalletBalance = getUserActualAmout(userData.walletBalance);
+    console.log("userWalletBalance", userWalletBalance);
+
+    let totalMaxDuration = Math.floor(userWalletBalance / priceVoice);
+    totalMaxDuration = totalMaxDuration * 60;
+    console.log("seconds", totalMaxDuration);
+    console.log(checkNum(astrologerData.phoneNumber));
+    if (totalMaxDuration < 300) {
+      return res
+        .status(403)
+        .json({ success: false, message: "insufficient wallet balance" });
+    }
+    //? initiating call to user and astrologer
+    let result = await initiateCall(
+      customerNumber,
+      checkNum(astrologerData.phoneNumber),
+      totalMaxDuration
+    );
+    console.log(result);
+
+    admin
+      .firestore()
+      .collection("meetings")
+      .doc()
+      .set({
+        astrologerUid,
+        userUid,
+        customerNumber,
+        astrologerNumber: checkNum(astrologerData.phoneNumber),
+        type: "voice",
+        status: "ongoing",
+        subType: "Right Now",
+        language,
+        query,
+        lastDuration: 0,
+        totalAmount: userWalletBalance,
+        lastAmountDeduct: 0,
+        lastActualDuration: 0, // actual duration of call
+        totalMaxDuration: totalMaxDuration, // max duration of call
+        scheduledTime: admin.firestore.FieldValue.serverTimestamp(),
+        date: admin.firestore.FieldValue.serverTimestamp(),
+        rate: 0,
+        rateMessage: "",
+        name: `${firstName} ${lastName}`,
+        pob: placeOfBirth,
+        dob: dateOfBirth,
+        tob: timeOfBirth,
+        callUniqueId: result.call_id,
+      });
+
+    admin
+      .firestore()
+      .collection("user")
+      .doc(userUid)
+      .update({
+        walletBalance: admin.firestore.FieldValue.increment(-userWalletBalance),
+        freezedAmount: admin.firestore.FieldValue.increment(+userWalletBalance),
+      });
+    updateAstrologerCurrentStatus(astrologerUid, false);
+
+    console.log("amout is freezed");
+    return res
+      .status(200)
+      .json({ success: true, message: "sucessfullly call initiated" });
+  } catch (error) {
+    console.log(error);
+    return res.status(400).json({ success: false, error });
+  }
+});
+
 app.post("/calling-status", async (req, res) => {
   let data = req.body;
 
@@ -1166,13 +1403,6 @@ app.post("/calling-status", async (req, res) => {
   }
 });
 
-exports.onKnowlarityUpdate = functions.firestore
-  .document("/knowlarity_statics/{callingStatsId}")
-  .onCreate(async (snap, context) => {
-    let newValue = snap.data();
-    console.log("values", newValue.agentNumber);
-  });
-
 const db = admin.firestore();
 sgMail.setApiKey(
   "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"
@@ -1180,6 +1410,7 @@ sgMail.setApiKey(
 // const Razorpay = require("razorpay");
 // var key_id = "rzp_test_5ViLvtlH2dJ4ku";
 // var key_secret = "LOMZVFSYU2ysVvS5O5T7qHpR";
+
 exports.onMeetingUpdate = functions.firestore
   .document("/meetings/{meetingId}")
   .onUpdate(async (change, context) => {
@@ -1197,9 +1428,11 @@ exports.onMeetingUpdate = functions.firestore
         .doc(context.params.meetingId)
         .update({ status: originalData.status });
     }
+
     if (originalData.status == "accepted" && updatedData.status == "ongoing") {
       // console.log("Ongoing notification");
       updateAstrologerCurrentStatus(updatedData.astrologerUid, false);
+      console.log("astrologer is busy");
       //   admin.firestore().collection('astrologer').doc(updatedData.astrologerUid).get().then((astrologerRef) => {
       //   astrologerData = astrologerRef.data();
       //   console.log(astrologerData.tokens);
@@ -1215,6 +1448,7 @@ exports.onMeetingUpdate = functions.firestore
       originalData.status != updatedData.status
     ) {
       updateAstrologerCurrentStatus(updatedData.astrologerUid, true);
+      console.log("astrologer is online");
     }
     if (
       originalData.status == "Initiated" &&
@@ -1305,6 +1539,8 @@ exports.onMeetingUpdate = functions.firestore
           context.params.meetingId,
           "meeting"
         );
+        // updateUserWalletBalance(
+        // )
         updateMeetingMetrics(
           updatedData.astrologerUid,
           updatedData.userUid,
@@ -1416,6 +1652,26 @@ exports.onMeetingUpdate = functions.firestore
             });
         });
     }
+
+    // calling status handling in meeting documents ///
+    // if ((originalData.type = "voice" && originalData.callUniqueId)) {
+    //   if (
+    //     originalData.status == "ongoing" &&
+    //     updatedData.status == originalData.status
+    //   ) {
+    //     updateAstrologerCurrentStatus(originalData.astrologerUid, false);
+    //     console.log("astrologer is busy");
+    //   }
+    //   if (
+    //     updatedData.status == "completed" ||
+    //     updatedData.status == "missed" ||
+    //     updatedData.status == "cancelled" ||
+    //     updatedData.status == "none"
+    //   ) {
+    //     updateAstrologerCurrentStatus(originalData.astrologerUid, true);
+    //     console.log("astrologer is online ");
+    //   }
+    // }
   });
 exports.sendBroadcastNotification = functions.firestore
   .document("/broadcasts/{documentId}")
@@ -1441,13 +1697,14 @@ exports.makeMeeting = functions.firestore
   .onCreate(async (snap, context) => {
     // Grab the current value of what was written to Firestore.
     const original = snap.data();
+    console.log(original);
     admin
       .firestore()
       .collection("astrologer")
       .doc(original["astrologerUid"])
       .get()
-      .then((userRef) => {
-        astrologerData = userRef.data();
+      .then((astroRef) => {
+        let astrologerData = astroRef.data();
         admin
           .firestore()
           .collection("meetings")
@@ -1464,14 +1721,14 @@ exports.makeMeeting = functions.firestore
       .doc(original["userUid"])
       .get()
       .then((userRef) => {
-        userData = userRef.data();
+        let userData = userRef.data();
         admin
           .firestore()
           .collection("meetings")
           .doc(context.params.meetingId)
           .update({
             userName: userData.firstName,
-            userImage: userData.profilePhotoLink,
+            userImage: userData.profilePhotoLink || userData.profilePic,
           });
       });
     return;
@@ -1566,6 +1823,7 @@ exports.makeAstrologer = functions.firestore
     // saveEmailInSendgrid(original['firstName'],original['email'],"79b82482-54aa-4f8f-9007-2d566c4dc7d6");
     return writeResult1;
   });
+
 exports.makeuser = functions.firestore
   .document("/user/{documentId}")
   .onCreate(async (snap, context) => {
@@ -1610,6 +1868,7 @@ exports.makeuser = functions.firestore
     );
     return writeResult;
   });
+
 exports.createComment = functions.firestore
   .document("/blog/{blogId}/comment/{commentId}")
   .onCreate(async (snap, context) => {
@@ -1623,6 +1882,7 @@ exports.createComment = functions.firestore
       .update({ commentCount: admin.firestore.FieldValue.increment(1) });
     return true;
   });
+
 exports.deleteComment = functions.firestore
   .document("/blog/{blogId}/comment/{commentId}")
   .onDelete(async (snap, context) => {
@@ -1636,6 +1896,7 @@ exports.deleteComment = functions.firestore
       .update({ commentCount: admin.firestore.FieldValue.increment(-1) });
     return true;
   });
+
 exports.updateUser = functions.firestore
   .document("/user/{userId}")
   .onUpdate(async (change, context) => {
@@ -1651,6 +1912,7 @@ exports.updateUser = functions.firestore
     }
     return true;
   });
+
 exports.updateRating = functions.firestore
   .document("/astrologer/{astrologerId}/astrologer_reviews/{reviewId}")
   .onCreate(async (snap, context) => {
@@ -1679,6 +1941,7 @@ exports.updateRating = functions.firestore
     });
     return true;
   });
+
 exports.addUserInSecurityGroup = functions.firestore
   .document("/security_groups/user/user/{userId}")
   .onCreate(async (snap, context) => {
@@ -1689,6 +1952,7 @@ exports.addUserInSecurityGroup = functions.firestore
       .update({ enabled: true });
     return true;
   });
+
 exports.addAstrologerInSecurityGroup = functions.firestore
   .document("/security_groups/astrologer/astrologer/{userId}")
   .onCreate(async (snap, context) => {
@@ -1699,6 +1963,7 @@ exports.addAstrologerInSecurityGroup = functions.firestore
       .update({ enabled: true });
     return true;
   });
+
 exports.addAdminInSecurityGroup = functions.firestore
   .document("/security_groups/admin/admin/{adminId}")
   .onCreate(async (snap, context) => {
@@ -2167,52 +2432,8 @@ async function getFirebaseData(collection, id) {
     .get();
   return { id: firebaseRef.id, ...firebaseRef.data() };
 }
-// making call using knwolarity api and updateing the meeting information /////////////////////
-exports.makeCall = functions.https.onRequest(async (req, res) => {
-  let { customerNumber, language, astrologerUid, userUid, query } = req.body;
-  console.log(req.body);
 
-  let astrologerData = await getFirebaseData("astrologer", astrologerUid);
-  let userData = await getFirebaseData("user", userUid);
-  console.log(astrologerData);
-  console.log(userData);
-
-  try {
-    let result = await initiateCall(customerNumber, astrologerData.phoneNumber);
-    await admin.firestore().collection("meetings").doc().set({
-      astrologerUid,
-      userUid,
-      customerNumber,
-      astrologerNumber: astrologerData.phoneNumber,
-      type: "voice",
-      status: "created",
-      subType: "Right Now",
-      language,
-      query,
-      lastAmountDeduct: "0",
-      lastActualDuration: "0",
-      lastDuration: "0",
-      totalAmount: "0",
-      totalDuration: "0",
-      scheduledTime: admin.firestore.FieldValue.serverTimestamp(),
-      date: admin.firestore.FieldValue.serverTimestamp(),
-      rate: "0",
-      rateMessage: "",
-      name: userData.firstName,
-      pob: userData.placeOfBirth,
-      callStatics: result,
-    });
-
-    return res
-      .status(200)
-      .json({ success: true, message: "sucessfullly call initiated" });
-  } catch (error) {
-    console.log(error);
-    return res.status(400).json({ success: false, error });
-  }
-});
-
-function initiateCall(customerNumber, astrologerNumber) {
+function initiateCall(customerNumber, astrologerNumber, totalMaxDuration) {
   return new Promise(async (resolve, reject) => {
     try {
       let config = {
@@ -2225,21 +2446,112 @@ function initiateCall(customerNumber, astrologerNumber) {
         },
         data: {
           customer_number: customerNumber, // userCallingNumber
-          agent_number: astrologerNumber, // astrologerCallingNumber
+          agent_number: astrologerNumber, // astrologerCallingNumber prod
+          // agent_number: "+919389112183", // astrologerCallingNumber dev
           k_number: "+917353000782",
           caller_id: "+918035240820",
-          additional_params: { total_call_duration: 15 },
+          additional_params: { total_call_duration: totalMaxDuration },
         },
       };
       let response = await axios(config);
+      console.log(response);
       resolve({
         ...response.data.success,
-        k_number: "+917353000782",
-        caller_id: "+918035240820",
       });
     } catch (error) {
       reject(error.response.data || error.message.data || error.message);
-      console.log(error);
+      console.log("error", error);
     }
   });
 }
+
+function convertIntoMinutes(str) {
+  let [hours, minutes, seconds] = str.split(".");
+  let totalSeconds = hours * 60 * 60 + minutes * 60 + seconds * 1;
+  return [Math.round(totalSeconds), Math.round(totalSeconds / 60)];
+}
+
+exports.onKnowlarityUpdate = functions.firestore
+  .document("/knowlarity_statics/{callingStatsId}")
+  .onCreate(async (snap, context) => {
+    let originalData = snap.data();
+    console.log("values", originalData.callUniqueId);
+
+    try {
+      let meetingSnapShot = await admin
+        .firestore()
+        .collection("meetings")
+        .where("callUniqueId", "==", originalData.callUniqueId)
+        .get();
+
+      let meetingRef = meetingSnapShot.docs.map((item) => {
+        return { id: item.id, ...item.data() };
+      });
+      console.log("Metting", meetingRef);
+
+      let astrologerData = await getFirebaseData(
+        "astrologer",
+        meetingRef[0]["astrologerUid"]
+      );
+      let pricePerMinute = astrologerData.priceVoice;
+      let meetingTotalAmount = meetingRef[0].totalAmount;
+      let [totalDurationInSeconds, totalDurationInMinutes] = convertIntoMinutes(
+        originalData.callDuration
+      );
+      let callActualAmount =
+        parseInt(totalDurationInSeconds / 60) * pricePerMinute;
+      let callStatus = "";
+      let userAmount = meetingTotalAmount - callActualAmount;
+
+      switch (originalData.callStatus) {
+        case "Connected":
+          callStatus = "completed";
+          break;
+        case "Missed":
+          callStatus = "missed";
+          break;
+        case "None":
+          callStatus = "cancelled";
+          break;
+        default:
+          break;
+      }
+      console.log("callStatus", callStatus);
+      admin.firestore().collection("meetings").doc(meetingRef[0]["id"]).update({
+        status: callStatus,
+        callDuration: originalData.callDuration,
+        callDateAndTime: originalData.callDateAndTime,
+        totalAmount: callActualAmount,
+        totalDuration: totalDurationInMinutes,
+        totalMaxDuration: totalDurationInSeconds, // in minutes
+        lastActualDuration: totalDurationInMinutes,
+        lastAmountDeduct: callActualAmount,
+        lastDuration: totalDurationInMinutes, // in minutes
+      });
+      admin
+        .firestore()
+        .collection("user")
+        .doc(meetingRef[0]["userUid"])
+        .update({
+          walletBalance: admin.firestore.FieldValue.increment(+userAmount),
+          freezedAmount: admin.firestore.FieldValue.increment(
+            -meetingTotalAmount
+          ),
+        });
+      admin
+        .firestore()
+        .collection("user")
+        .doc(meetingRef[0]["userUid"])
+        .collection("wallet_transaction")
+        .add({
+          subtypeId: meetingRef[0]["id"],
+          amount: +callActualAmount,
+          type: "debit",
+          subtype: "meeting",
+          date: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      console.log("wallet intiated");
+    } catch (error) {
+      console.log(error);
+    }
+  });

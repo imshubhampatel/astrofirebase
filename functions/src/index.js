@@ -4,25 +4,27 @@ const googleapis = require("googleapis");
 const admin = require("firebase-admin");
 const PaytmChecksum = require("paytmchecksum");
 const sgMail = require("@sendgrid/mail");
-const cors = require("cors")({
-  origin: true,
-});
 const { RtcTokenBuilder, RtcRole } = require("agora-access-token");
 const express = require("express");
 const bodyParser = require("body-parser");
+const Razorpay = require("razorpay");
+const request = require("request");
+const shortId = require("shortid");
 var axios = require("axios");
+
 admin.initializeApp();
 const sgClient = require("@sendgrid/client");
 sgClient.setApiKey(
   "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"
 );
-
 const app = express();
+const cors = require("cors")({
+  origin: true,
+});
 const main = express();
 const key = require("../service-key.json");
-
-import handleKnowlarityCall from "./knowlarity";
-
+const knowlarity_1 = require("./knowlarity");
+const { user } = require("firebase-functions/v1/auth");
 const authClient = new googleapis.google.auth.JWT({
   email: key.client_email,
   key: key.private_key,
@@ -31,25 +33,21 @@ const authClient = new googleapis.google.auth.JWT({
     "https://www.googleapis.com/auth/cloud-platform",
   ],
 });
-
 const firestoreClient = googleapis.google.firestore({
   version: "v1beta2",
   auth: authClient,
 });
-
+app.use(cors);
 main.use("/api/", app);
 main.use(bodyParser.json());
 main.use(bodyParser.urlencoded({ extended: false }));
 // webApi is your functions name, and you will pass main as
 // a parameter
 exports.webApi = functions.https.onRequest(main);
-
 const PAYTM_MID = "ASTROC45568948395662";
 const PAYTM_MKEY = "i&36UQCFDwc2GdeF";
-
 // const PAYTM_MID = "rKzjvm67337748181800";
 // const PAYTM_MKEY = "YzZXigSQSE9%f9@A";
-
 function fcm_notification(type, topic_or_token_id, title, body, data_body) {
   var payload = {};
   if (type == "token") {
@@ -71,7 +69,6 @@ function fcm_notification(type, topic_or_token_id, title, body, data_body) {
       data: data_body,
     };
   }
-
   console.log(payload);
   admin
     .messaging()
@@ -86,6 +83,57 @@ function fcm_notification(type, topic_or_token_id, title, body, data_body) {
     });
 }
 
+async function updateUserWalletBalance(meetingAmount, meetingId, userId, time) {
+  let tuserRef = db.collection("user").doc(userId);
+  let success = false;
+  await admin.firestore().runTransaction((transaction) => {
+    return transaction.get(tuserRef).then((result) => {
+      tuserData = result.data();
+      transaction.update(tuserRef, {
+        walletBalance: admin.firestore.FieldValue.increment(-meetingAmount),
+      });
+      success = true;
+    });
+  });
+  if (success) {
+    admin
+      .firestore()
+      .collection("meetings")
+      .doc(meetingId)
+      .update({
+        totalAmount: admin.firestore.FieldValue.increment(+meetingAmount),
+        lastAmountDeduct: +meetingAmount,
+        totalDuration: admin.firestore.FieldValue.increment(+time),
+      });
+    let status2 = db
+      .collection("user")
+      .doc(userId)
+      .collection("wallet_transaction")
+      .add({
+        subtypeId: meetingId,
+        amount: +meetingAmount,
+        type: "debit",
+        subtype: "meeting",
+        date: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    admin
+      .firestore()
+      .collection("meetings")
+      .doc(meetingId)
+      .get()
+      .then(async (meetingRef) => {
+        let data = meetingRef.data();
+        if (data.status == "Initiated") {
+          admin
+            .firestore()
+            .collection("meetings")
+            .doc(meetingId)
+            .update({ status: "accepted" });
+        }
+      });
+  }
+  return;
+}
 function updateAstrologerBalance(
   astrologerId,
   totalAmount,
@@ -98,10 +146,10 @@ function updateAstrologerBalance(
     .doc("money")
     .get()
     .then((moneyRef) => {
-      moneyData = moneyRef.data();
-      astrologerAmount = totalAmount * ((100 - moneyData.commission) / 100);
+      let moneyData = moneyRef.data();
+      let astrologerAmount = totalAmount * ((100 - moneyData.commission) / 100);
       astrologerAmount = astrologerAmount.toFixed(2);
-      status1 = db
+      let status1 = db
         .collection("astrologer")
         .doc(astrologerId)
         .collection("privateInfo")
@@ -111,7 +159,7 @@ function updateAstrologerBalance(
             +astrologerAmount
           ),
         });
-      status = db
+      let status = db
         .collection("astrologer")
         .doc(astrologerId)
         .collection("privateInfo")
@@ -119,7 +167,7 @@ function updateAstrologerBalance(
         .update({
           earnings: admin.firestore.FieldValue.increment(+astrologerAmount),
         });
-      status2 = db
+      let status2 = db
         .collection("astrologer")
         .doc(astrologerId)
         .collection("astologer_wallet_transaction")
@@ -130,7 +178,7 @@ function updateAstrologerBalance(
           subtype: subtype,
           date: admin.firestore.FieldValue.serverTimestamp(),
         });
-      adminAmount = totalAmount - astrologerAmount;
+      let adminAmount = totalAmount - astrologerAmount;
       db.collection("app_details")
         .doc("money")
         .update({
@@ -175,7 +223,6 @@ function addMoneyToWallet(user, amount, orderID) {
       db.collection("app_details")
         .doc("money")
         .update({ gstCollected: admin.firestore.FieldValue.increment(+gst) });
-
       admin
         .firestore()
         .collection("user")
@@ -183,7 +230,6 @@ function addMoneyToWallet(user, amount, orderID) {
         .update({
           walletBalance: admin.firestore.FieldValue.increment(+userAmount),
         });
-
       admin
         .firestore()
         .collection("user")
@@ -196,40 +242,28 @@ function addMoneyToWallet(user, amount, orderID) {
           subtype: "payment",
           date: admin.firestore.FieldValue.serverTimestamp(),
         });
-
       console.log("Money added to wallet");
     });
-
   console.log("Money added to wallet sync");
 }
-
 function addCashbackMoney(user, amount, orderID, cashbackName) {
   console.log("entry 1");
-
   db.collection("app_details")
     .doc("money")
     .update({ cashbackCount: admin.firestore.FieldValue.increment(1) });
-
   console.log("entry 2");
-
   db.collection("app_details")
     .doc("money")
     .update({ cashbackAmount: admin.firestore.FieldValue.increment(+amount) });
-
   console.log("entry 3");
-
   db.collection("user")
     .doc(user)
     .update({ walletBalance: admin.firestore.FieldValue.increment(+amount) });
-
   console.log("entry 4");
-
   db.collection("user")
     .doc(user)
     .update({ rechargeCount: admin.firestore.FieldValue.increment(1) });
-
   console.log("entry 5");
-
   db.collection("user")
     .doc(user)
     .collection("wallet_transaction")
@@ -240,9 +274,7 @@ function addCashbackMoney(user, amount, orderID, cashbackName) {
       subtype: "cashback",
       date: admin.firestore.FieldValue.serverTimestamp(),
     });
-
   console.log("entry 6");
-
   db.collection("user")
     .doc(user)
     .get()
@@ -259,16 +291,12 @@ function addCashbackMoney(user, amount, orderID, cashbackName) {
           });
         });
     });
-
   console.log("entry 7");
-
   db.collection("cashback")
     .doc(cashbackName)
     .update({ useCount: admin.firestore.FieldValue.increment(1) });
-
   console.log("money added to cashback");
 }
-
 function updateAstrologerBalance2(
   astrologerId,
   astrologerAmount,
@@ -333,7 +361,6 @@ function updateAstrologerBalance2(
       }
     });
 }
-
 function updateAstrologerCurrentStatus(astrologerId, available) {
   if (available)
     admin
@@ -348,7 +375,6 @@ function updateAstrologerCurrentStatus(astrologerId, available) {
       .doc(astrologerId)
       .update({ currentStatus: "Busy" });
 }
-
 function updateMeetingMetrics(astrologerId, userId, totalDuration, type) {
   if (type == "chat") {
     admin
@@ -399,11 +425,9 @@ function updateMeetingMetrics(astrologerId, userId, totalDuration, type) {
       });
   }
 }
-
 app.post("/know_call", async (req, response) => {
-  handleKnowlarityCall(req);
+  (0, knowlarity_1.default)(req);
 });
-
 app.post("/intiatetransaction/", async (req, response) => {
   if (req.body && req.body.user && req.body.orderId && req.body.amount) {
     const writeResult1 = await admin
@@ -416,12 +440,10 @@ app.post("/intiatetransaction/", async (req, response) => {
         status: "Initiated",
         amount: req.body["amount"],
       });
-
     var paytmParams = {};
     callbackUrl = "https://securegw.paytm.in/theia/paytmCallback?ORDER_ID=";
     callbackUrl = callbackUrl.concat(req.body["orderId"]);
     console.log(callbackUrl);
-
     body = {
       requestType: "Payment",
       mid: PAYTM_MID,
@@ -440,9 +462,7 @@ app.post("/intiatetransaction/", async (req, response) => {
       txnAmount: { value: req.body["amount"], currency: "INR" },
       userInfo: { custId: req.body["user"] },
     };
-
     console.log(JSON.stringify(paytmParams.body));
-
     PaytmChecksum.generateSignature(
       JSON.stringify(paytmParams.body),
       PAYTM_MKEY
@@ -453,7 +473,6 @@ app.post("/intiatetransaction/", async (req, response) => {
           body: paytmParams.body,
           head: { signature: result },
         };
-
         var paytmInitTransactionAPIUrl = `https://securegw.paytm.in/theia/api/v1/initiateTransaction?mid=${paytmParams.body.mid}&orderId=${paytmParams.body.orderId}`;
         return axios
           .post(paytmInitTransactionAPIUrl, post_data)
@@ -472,15 +491,83 @@ app.post("/intiatetransaction/", async (req, response) => {
     response.status(401).send('{"message": "Invalid Data"}');
   }
 });
+// http://localhost:5001/astrochrchafirebase/us-central1/webApi/api/intiatetransaction_razorypay
 
+app.post("/intiatetransaction_razorypay/", async (req, res) => {
+  const instance = new Razorpay({
+    key_id: "rzp_test_FuZPDTFdRxeNou",
+    key_secret: "MezhnZ5AHkmOsBbK8iCd8TfH",
+  });
+
+  const payment_capture = 0;
+  // const amount = req.body.amount;
+  const currency = "INR";
+  try {
+    const options = {
+      amount: (499 * 100).toString(),
+      currency,
+      receipt: shortId.generate(),
+      payment_capture,
+    };
+    instance.orders.create(options, async function (err, order) {
+      if (err) {
+        return res.status(500).json({
+          message: "Something Went Wrong",
+        });
+      }
+      return res.status(200).json(order);
+    });
+  } catch (err) {
+    return res.status(500).json({
+      message: "Something Went Wrong",
+    });
+  }
+});
+
+app.post("/razor_capture/:paymentId", (req, res) => {
+  let config = {
+    RAZOR_PAY_KEY_ID: "rzp_test_FuZPDTFdRxeNou",
+    RAZOR_PAY_KEY_SECRET: "MezhnZ5AHkmOsBbK8iCd8TfH",
+  };
+  console.log("called");
+  try {
+    return request(
+      {
+        method: "POST",
+        url: `https://${config.RAZOR_PAY_KEY_ID}:${config.RAZOR_PAY_KEY_SECRET}@api.razorpay.com/v1/payments/${req.params.paymentId}/capture`,
+        form: {
+          amount: 499 * 100, // amount == Rs 499 // Same As Order amount
+          currency: "INR",
+        },
+      },
+      async function (err, response, body) {
+        if (err) {
+          console.log("error");
+          return res.status(500).json({
+            message: "Something Went Wrong",
+          });
+        }
+        console.log("hurrah");
+        console.log("Status:", response.statusCode);
+        console.log("Headers:", JSON.stringify(response.headers));
+        console.log("Response:", body);
+        return res.status(200).json(body);
+      }
+    );
+  } catch (err) {
+    console.log("error found", err);
+    return res.status(500).json({
+      message: "Something Went Wrong",
+    });
+  }
+});
 app.post("/refund/", async (req, res) => {
   try {
     var user = req.body["user"];
     var amount = req.body["amount"];
-  } catch {
+  } catch (_a) {
     res.status(400).send(`{ "message" : "Required Parameters Missing" }`);
   }
-
   try {
     status1 = db
       .collection("user")
@@ -497,16 +584,13 @@ app.post("/refund/", async (req, res) => {
         subtype: "",
         date: admin.firestore.FieldValue.serverTimestamp(),
       });
-  } catch {
+  } catch (_b) {
     res.status(400).send(`{ "message" : "Something Wrong Happenned" }`);
   }
-
   res.status(201).send(`{ "message" : "true" }`);
 });
-
 app.post("/updatetransaction/", async (req, res) => {
   console.log(req.body);
-
   /* string we need to verify against checksum */
   admin
     .firestore()
@@ -526,12 +610,9 @@ app.post("/updatetransaction/", async (req, res) => {
         txnAmount: { value: req.body["TXNAMOUNT"], currency: "INR" },
         userInfo: { custId: paymentData.user },
       };
-
       console.log(paymentData);
-
       /* checksum that we need to verify */
       var paytmChecksum = req.body["CHECKSUMHASH"];
-
       var isVerifySignature = PaytmChecksum.verifySignature(
         JSON.stringify(body),
         PAYTM_MKEY,
@@ -542,18 +623,14 @@ app.post("/updatetransaction/", async (req, res) => {
       } else {
         console.log("Checksum Mismatched");
       }
-
       if (req.body["STATUS"] == "TXN_SUCCESS") {
         addMoneyToWallet(
           paymentData.user,
           req.body["TXNAMOUNT"],
           req.body["ORDERID"]
         );
-
         var amount = req.body["TXNAMOUNT"];
-
         var invoiceNo = 0;
-
         adminRef = admin
           .firestore()
           .collection("app_details")
@@ -563,18 +640,14 @@ app.post("/updatetransaction/", async (req, res) => {
             if (!res.exists) {
               throw "Document does not exist!";
             }
-
             var newInvoiceNo = res.data().currentInvoiceNo + 1;
             invoiceNo = newInvoiceNo;
-
             functions.logger.log(newInvoiceNo);
-
             transaction.update(adminRef, {
               currentInvoiceNo: newInvoiceNo,
             });
           });
         });
-
         admin
           .firestore()
           .collection("payments")
@@ -584,7 +657,6 @@ app.post("/updatetransaction/", async (req, res) => {
             status: req.body["STATUS"],
             txnId: req.body["TXNID"],
           });
-
         admin
           .firestore()
           .collection("app_details")
@@ -597,7 +669,6 @@ app.post("/updatetransaction/", async (req, res) => {
             gst = gst.toFixed(2);
             var addedAmount = userAmount.toFixed(2);
             var gstPercent = moneyData.gst;
-
             admin
               .firestore()
               .collection("user")
@@ -606,7 +677,7 @@ app.post("/updatetransaction/", async (req, res) => {
               .then((userRef) => {
                 data = userRef.data();
                 const msg = {
-                  from: "astrochrchatech@gmail.com", // Something like: Jane Doe <janedoe@gmail.com>
+                  from: "astrochrchatech@gmail.com",
                   to: data["email"],
                   templateId: "d-f1edfa12bbd84263af4d28493a056f4a",
                   dynamic_template_data: {
@@ -620,7 +691,6 @@ app.post("/updatetransaction/", async (req, res) => {
                     lastName: data.lastName,
                   },
                 };
-
                 sgMail.send(msg);
               });
           });
@@ -632,13 +702,10 @@ app.post("/updatetransaction/", async (req, res) => {
           .update({ status: req.body["STATUS"], txnId: req.body["TXNID"] });
       }
     });
-
   res.status(201).send("Transaction Successful");
 });
-
 app.post("/updatetransaction_v2/", async (req, res) => {
   console.log(req.body);
-
   /* string we need to verify against checksum */
   admin
     .firestore()
@@ -658,26 +725,21 @@ app.post("/updatetransaction_v2/", async (req, res) => {
         txnAmount: { value: req.body["TXNAMOUNT"], currency: "INR" },
         userInfo: { custId: paymentData.user },
       };
-
       console.log(paymentData);
-
       /* checksum that we need to verify */
       var paytmChecksum = req.body["CHECKSUMHASH"];
-
       // var isVerifySignature = PaytmChecksum.verifySignature(JSON.stringify(body), PAYTM_MKEY, paytmChecksum);
       // if (isVerifySignature) {
       //   console.log("Checksum Matched");
       // } else {
       //   console.log("Checksum Mismatched");
       // }
-
       if (req.body["STATUS"] == "TXN_SUCCESS") {
         addMoneyToWallet(
           paymentData.user,
           req.body["TXNAMOUNT"],
           req.body["ORDERID"]
         );
-
         if (req.body["CASHBACK_ID"] != "") {
           db.collection("cashback")
             .doc(req.body["CASHBACK_ID"])
@@ -691,10 +753,8 @@ app.post("/updatetransaction_v2/", async (req, res) => {
               );
             });
         }
-
         let amount = req.body["TXNAMOUNT"];
         let invoiceNo = 0;
-
         adminRef = admin
           .firestore()
           .collection("app_details")
@@ -704,18 +764,14 @@ app.post("/updatetransaction_v2/", async (req, res) => {
             if (!res.exists) {
               throw "Document does not exist!";
             }
-
             let newInvoiceNo = res.data().currentInvoiceNo + 1;
             invoiceNo = newInvoiceNo;
-
             functions.logger.log(newInvoiceNo);
-
             transaction.update(adminRef, {
               currentInvoiceNo: newInvoiceNo,
             });
           });
         });
-
         admin
           .firestore()
           .collection("payments")
@@ -725,7 +781,6 @@ app.post("/updatetransaction_v2/", async (req, res) => {
             status: req.body["STATUS"],
             txnId: req.body["TXNID"],
           });
-
         admin
           .firestore()
           .collection("app_details")
@@ -738,7 +793,6 @@ app.post("/updatetransaction_v2/", async (req, res) => {
             gst = gst.toFixed(2);
             let addedAmount = userAmount.toFixed(2);
             let gstPercent = moneyData.gst;
-
             admin
               .firestore()
               .collection("user")
@@ -747,7 +801,7 @@ app.post("/updatetransaction_v2/", async (req, res) => {
               .then((userRef) => {
                 data = userRef.data();
                 const msg = {
-                  from: "astrochrchatech@gmail.com", // Something like: Jane Doe <janedoe@gmail.com>
+                  from: "astrochrchatech@gmail.com",
                   to: data["email"],
                   templateId: "d-f1edfa12bbd84263af4d28493a056f4a",
                   dynamic_template_data: {
@@ -761,7 +815,6 @@ app.post("/updatetransaction_v2/", async (req, res) => {
                     lastName: data.lastName,
                   },
                 };
-
                 sgMail.send(msg);
               });
           });
@@ -773,13 +826,10 @@ app.post("/updatetransaction_v2/", async (req, res) => {
           .update({ status: req.body["STATUS"], txnId: req.body["TXNID"] });
       }
     });
-
   res.status(201).send("Transaction Successful");
 });
-
 app.post("/updatetransaction_razorpay/", async (req, response) => {
   console.log(req.body);
-
   if (
     req.body &&
     req.body["USER"] &&
@@ -802,10 +852,8 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
     console.log(req.body["ORDERID"]);
     console.log(req.body["TXNAMOUNT"]);
     response.status(401).send('{"message": "Invalid Data"}');
-
     return;
   }
-
   /* string we need to verify against checksum */
   admin
     .firestore()
@@ -814,16 +862,13 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
     .get()
     .then((paymentRef) => {
       paymentData = paymentRef.data();
-
       console.log(paymentData);
-
       if (req.body["STATUS"] == "TXN_SUCCESS") {
         addMoneyToWallet(
           paymentData.user,
           req.body["TXNAMOUNT"],
           req.body["ORDERID"]
         );
-
         if (req.body["CASHBACK_ID"] != "") {
           db.collection("cashback")
             .doc(req.body["CASHBACK_ID"])
@@ -837,10 +882,8 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
               );
             });
         }
-
         let amount = req.body["TXNAMOUNT"];
         let invoiceNo = 0;
-
         adminRef = admin
           .firestore()
           .collection("app_details")
@@ -850,18 +893,14 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
             if (!res.exists) {
               throw "Document does not exist!";
             }
-
             let newInvoiceNo = res.data().currentInvoiceNo + 1;
             invoiceNo = newInvoiceNo;
-
             functions.logger.log(newInvoiceNo);
-
             transaction.update(adminRef, {
               currentInvoiceNo: newInvoiceNo,
             });
           });
         });
-
         admin
           .firestore()
           .collection("payments")
@@ -871,7 +910,6 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
             status: req.body["STATUS"],
             txnId: req.body["ORDERID"],
           });
-
         admin
           .firestore()
           .collection("app_details")
@@ -884,7 +922,6 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
             gst = gst.toFixed(2);
             let addedAmount = userAmount.toFixed(2);
             let gstPercent = moneyData.gst;
-
             admin
               .firestore()
               .collection("user")
@@ -893,7 +930,7 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
               .then((userRef) => {
                 data = userRef.data();
                 const msg = {
-                  from: "astrochrchatech@gmail.com", // Something like: Jane Doe <janedoe@gmail.com>
+                  from: "astrochrchatech@gmail.com",
                   to: data["email"],
                   templateId: "d-f1edfa12bbd84263af4d28493a056f4a",
                   dynamic_template_data: {
@@ -907,7 +944,6 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
                     lastName: data.lastName,
                   },
                 };
-
                 sgMail.send(msg);
               });
           });
@@ -919,18 +955,14 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
           .update({ status: req.body["STATUS"], txnId: req.body["TXNID"] });
       }
     });
-
   response.status(201).send("Transaction Successful");
 });
-
 async function deductAmount(meetingAmount, meetingId, userId, res, time) {
   let tuserRef = db.collection("user").doc(userId);
   let success = false;
-
   await admin.firestore().runTransaction((transaction) => {
     return transaction.get(tuserRef).then((result) => {
       tuserData = result.data();
-
       if (tuserData.walletBalance < meetingAmount) {
         res.status(400).send(`{ "message" : "Insufficient balance" }`);
       } else {
@@ -942,7 +974,6 @@ async function deductAmount(meetingAmount, meetingId, userId, res, time) {
       }
     });
   });
-
   if (success) {
     admin
       .firestore()
@@ -953,7 +984,7 @@ async function deductAmount(meetingAmount, meetingId, userId, res, time) {
         lastAmountDeduct: +meetingAmount,
         totalDuration: admin.firestore.FieldValue.increment(+time),
       });
-    status2 = db
+    let status2 = db
       .collection("user")
       .doc(userId)
       .collection("wallet_transaction")
@@ -970,7 +1001,7 @@ async function deductAmount(meetingAmount, meetingId, userId, res, time) {
       .doc(meetingId)
       .get()
       .then(async (meetingRef) => {
-        data = meetingRef.data();
+        let data = meetingRef.data();
         if (data.status == "Initiated") {
           admin
             .firestore()
@@ -980,18 +1011,15 @@ async function deductAmount(meetingAmount, meetingId, userId, res, time) {
         }
       });
   }
-
   return;
 }
-
 app.post("/deductAmount/", async (req, res) => {
   try {
     var time = req.body["time"];
     var meetingId = req.body["meetingId"];
-  } catch {
+  } catch (_a) {
     res.status(400).send(`{ "message" : "Required Parameters Missing" }`);
   }
-
   console.log(meetingId);
   db.collection("meetings")
     .doc(meetingId)
@@ -1011,14 +1039,12 @@ app.post("/deductAmount/", async (req, res) => {
               meetingRate = meetingData.consultationRate;
               meetingAmount = meetingRate * time;
               discount = 0;
-
               if (meetingData.coupon != null && meetingData.coupon != "") {
                 db.collection("coupon")
                   .doc(meetingData.coupon)
                   .get()
                   .then(async (couponRef) => {
                     couponData = couponRef.data();
-
                     if (couponData != null) {
                       if (
                         couponData.live &&
@@ -1029,13 +1055,10 @@ app.post("/deductAmount/", async (req, res) => {
                           discount =
                             (couponData.discount / 100) * meetingAmount;
                         else discount = couponData.discount;
-
                         if (discount > couponData.maxDiscount) {
                           discount = couponData.maxDiscount;
                         }
-
                         discount = discount.toFixed(2);
-
                         db.collection("coupon")
                           .doc(meetingData.coupon)
                           .collection("uses")
@@ -1124,16 +1147,14 @@ app.post("/deductAmount/", async (req, res) => {
         });
     });
 });
-
 app.post("/deductBroadcastAmount/", async (req, res) => {
   try {
     var time = req.body["time"];
     var broadcastId = req.body["meetingId"];
     var userId = req.body["userId"];
-  } catch {
+  } catch (_a) {
     res.status(400).send(`{ "message" : "Required Parameters Missing" }`);
   }
-
   db.collection("broadcasts")
     .doc(broadcastId)
     .get()
@@ -1152,19 +1173,15 @@ app.post("/deductBroadcastAmount/", async (req, res) => {
               broadcastRate = broadcastData.consultationRate;
               amount = broadcastRate * time;
               console.log(amount);
-
               tuserRef = db.collection("user").doc(userId);
-
               admin.firestore().runTransaction((transaction) => {
                 return transaction.get(tuserRef).then((result) => {
                   tuserData = result.data();
-
                   if (tuserData.walletBalance < amount) {
                     res
                       .status(400)
                       .send(`{ "message" : "Insufficient balance" }`);
                   }
-
                   transaction.update(tuserRef, {
                     walletBalance: admin.firestore.FieldValue.increment(
                       -amount
@@ -1172,7 +1189,6 @@ app.post("/deductBroadcastAmount/", async (req, res) => {
                   });
                 });
               });
-
               status2 = db
                 .collection("user")
                 .doc(userId)
@@ -1184,7 +1200,6 @@ app.post("/deductBroadcastAmount/", async (req, res) => {
                   subtype: "broadcast",
                   date: admin.firestore.FieldValue.serverTimestamp(),
                 });
-
               fcm_notification(
                 "token",
                 userData.tokens[userData.tokens.length - 1],
@@ -1192,27 +1207,23 @@ app.post("/deductBroadcastAmount/", async (req, res) => {
                 "Wallet Balance debited for broadcast",
                 { type: "debit" }
               );
-
               updateAstrologerBalance(
                 broadcastData.astrologerUid,
                 amount,
                 broadcastId,
                 "broadcast"
               );
-
               res.status(201).send(`{ "message" : "true" }`);
             });
         });
     });
 });
-
 app.get("/getAgoraToken/", async (req, res) => {
   const appID = "53d641235d0c426eb4f72f9dc432de78";
   const appCertificate = "myAppCertificate";
   const uid = req.body["userId"];
   const channelId = req.body["meetingId"];
   const role = RtcRole.PUBLISHER;
-
   const expirationTimeInSeconds = 18000;
   const currentTimestamp = Math.floor(Date.now() / 1000);
   const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
@@ -1224,8 +1235,116 @@ app.get("/getAgoraToken/", async (req, res) => {
     role,
     privilegeExpiredTs
   );
-
   res.status(200).send(token);
+});
+
+let checkNum = function (num) {
+  let isValid = num.includes("+91");
+  if (!isValid) {
+    num = "+91" + num;
+    return num;
+  }
+  return num;
+};
+function getUserActualAmout(amout) {
+  let actualAmout = Math.floor(amout);
+  actualAmout = "" + actualAmout;
+  actualAmout = [...actualAmout];
+  console.log(actualAmout);
+  actualAmout[actualAmout.length - 1] = "0";
+  actualAmout = actualAmout.join("");
+  actualAmout = parseInt(actualAmout);
+  return actualAmout;
+}
+app.post("/make-call", async (req, res) => {
+  console.log("hey");
+  let {
+    customerNumber,
+    language,
+    astrologerUid,
+    userUid,
+    query,
+    firstName,
+    lastName,
+    timeOfBirth,
+    placeOfBirth,
+    dateOfBirth,
+  } = req.body;
+  console.log(req.body);
+  try {
+    let astrologerData = await getFirebaseData("astrologer", astrologerUid);
+    console.log(astrologerData);
+    let userData = await getFirebaseData("user", userUid);
+
+    let priceVoice = astrologerData.priceVoice; // 100
+    let userWalletBalance = getUserActualAmout(userData.walletBalance);
+    console.log("userWalletBalance", userWalletBalance);
+
+    let totalMaxDuration = Math.floor(userWalletBalance / priceVoice);
+    totalMaxDuration = totalMaxDuration * 60;
+    console.log("seconds", totalMaxDuration);
+    console.log(checkNum(astrologerData.phoneNumber));
+    if (totalMaxDuration < 300) {
+      return res
+        .status(403)
+        .json({ success: false, message: "insufficient wallet balance" });
+    }
+    //? initiating call to user and astrologer
+    let result = await initiateCall(
+      customerNumber,
+      checkNum(astrologerData.phoneNumber),
+      totalMaxDuration
+    );
+    console.log(result);
+
+    admin
+      .firestore()
+      .collection("meetings")
+      .doc()
+      .set({
+        astrologerUid,
+        userUid,
+        customerNumber,
+        astrologerNumber: checkNum(astrologerData.phoneNumber),
+        type: "voice",
+        status: "ongoing",
+        subType: "Right Now",
+        language,
+        query,
+        lastDuration: 0,
+        totalAmount: userWalletBalance,
+        lastAmountDeduct: 0,
+        lastActualDuration: 0, // actual duration of call
+        totalMaxDuration: totalMaxDuration, // max duration of call
+        scheduledTime: admin.firestore.FieldValue.serverTimestamp(),
+        date: admin.firestore.FieldValue.serverTimestamp(),
+        rate: 0,
+        rateMessage: "",
+        name: `${firstName} ${lastName}`,
+        pob: placeOfBirth,
+        dob: dateOfBirth,
+        tob: timeOfBirth,
+        callUniqueId: result.call_id,
+      });
+
+    admin
+      .firestore()
+      .collection("user")
+      .doc(userUid)
+      .update({
+        walletBalance: admin.firestore.FieldValue.increment(-userWalletBalance),
+        freezedAmount: admin.firestore.FieldValue.increment(+userWalletBalance),
+      });
+    updateAstrologerCurrentStatus(astrologerUid, false);
+
+    console.log("amout is freezed");
+    return res
+      .status(200)
+      .json({ success: true, message: "sucessfullly call initiated" });
+  } catch (error) {
+    console.log(error);
+    return res.status(400).json({ success: false, error });
+  }
 });
 
 app.post("/calling-status", async (req, res) => {
@@ -1282,12 +1401,6 @@ app.post("/calling-status", async (req, res) => {
   }
 });
 
-exports.onKnowlarityUpdate = functions.firestore
-  .document("/knowlarity_statics/{callingStatsId}")
-  .onCreate(async (snap, context) => {
-    let newValue = snap.data();
-    console.log("values", newValue.agentNumber);
-  });
 const db = admin.firestore();
 sgMail.setApiKey(
   "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"
@@ -1300,10 +1413,8 @@ exports.onMeetingUpdate = functions.firestore
   .document("/meetings/{meetingId}")
   .onUpdate(async (change, context) => {
     // Grab the current value of what was written to Firestore.
-
     const originalData = change.before.data();
     const updatedData = change.after.data();
-
     if (
       (originalData.status == "cancelled" || originalData.status == "missed") &&
       updatedData.status != "cancelled" &&
@@ -1319,29 +1430,24 @@ exports.onMeetingUpdate = functions.firestore
     if (originalData.status == "accepted" && updatedData.status == "ongoing") {
       // console.log("Ongoing notification");
       updateAstrologerCurrentStatus(updatedData.astrologerUid, false);
+      console.log("astrologer is busy");
       //   admin.firestore().collection('astrologer').doc(updatedData.astrologerUid).get().then((astrologerRef) => {
-
       //   astrologerData = astrologerRef.data();
       //   console.log(astrologerData.tokens);
       //   admin.firestore().collection('user').doc(updatedData.userUid).get().then((userRef) => {
-
       //     userData = userRef.data();
-
       //     // fcm_notification("token",astrologerData.tokens[astrologerData.tokens.length-1],"Meeting started","Please join the meeting",{"type": "meetingStarted"});
       //     // fcm_notification("token",userData.tokens[userData.tokens.length-1],"Meeting Started","Please join the meeting",{"type": "meetingStarted"});
-
       // });
-
       // })
     }
-
     if (
       originalData.status == "ongoing" &&
       originalData.status != updatedData.status
     ) {
       updateAstrologerCurrentStatus(updatedData.astrologerUid, true);
+      console.log("astrologer is online");
     }
-
     if (
       originalData.status == "Initiated" &&
       updatedData.status == "accepted"
@@ -1377,7 +1483,6 @@ exports.onMeetingUpdate = functions.firestore
           .update({ status: "booked" });
       }
     }
-
     if (originalData.status == "ongoing" && updatedData.status == "refunded") {
       amount =
         ((updatedData.lastDuration - updatedData.lastActualDuration) /
@@ -1404,7 +1509,6 @@ exports.onMeetingUpdate = functions.firestore
       db.collection("meetings")
         .doc(context.params.meetingId)
         .update({ totalAmount: admin.firestore.FieldValue.increment(-amount) });
-
       updateAstrologerBalance(
         updatedData.astrologerUid,
         updatedData.totalAmount - amount,
@@ -1418,7 +1522,6 @@ exports.onMeetingUpdate = functions.firestore
         updatedData.type
       );
     }
-
     if (originalData.status == "ongoing" && updatedData.status == "completed") {
       if (updatedData.userCount < 2) {
         console.log("meeting missed");
@@ -1434,6 +1537,8 @@ exports.onMeetingUpdate = functions.firestore
           context.params.meetingId,
           "meeting"
         );
+        // updateUserWalletBalance(
+        // )
         updateMeetingMetrics(
           updatedData.astrologerUid,
           updatedData.userUid,
@@ -1457,7 +1562,6 @@ exports.onMeetingUpdate = functions.firestore
           .update({ totalMeetings: admin.firestore.FieldValue.increment(1) });
       }
     }
-
     if (
       (originalData.status == "accepted" || originalData.status == "ongoing") &&
       updatedData.status == "cancelled"
@@ -1484,7 +1588,6 @@ exports.onMeetingUpdate = functions.firestore
         .doc(context.params.meetingId)
         .update({ totalAmount: admin.firestore.FieldValue.increment(-amount) });
     }
-
     if (originalData.status == "completed" && updatedData.status == "missed") {
       amount = updatedData.totalAmount;
       status1 = db
@@ -1507,7 +1610,6 @@ exports.onMeetingUpdate = functions.firestore
       db.collection("meetings")
         .doc(context.params.meetingId)
         .update({ totalAmount: admin.firestore.FieldValue.increment(-amount) });
-
       admin
         .firestore()
         .collection("user")
@@ -1525,7 +1627,6 @@ exports.onMeetingUpdate = functions.firestore
           );
         });
     }
-
     if (originalData.rate != updatedData.rate) {
       admin
         .firestore()
@@ -1549,16 +1650,33 @@ exports.onMeetingUpdate = functions.firestore
             });
         });
     }
-  });
 
+    // calling status handling in meeting documents ///
+    // if ((originalData.type = "voice" && originalData.callUniqueId)) {
+    //   if (
+    //     originalData.status == "ongoing" &&
+    //     updatedData.status == originalData.status
+    //   ) {
+    //     updateAstrologerCurrentStatus(originalData.astrologerUid, false);
+    //     console.log("astrologer is busy");
+    //   }
+    //   if (
+    //     updatedData.status == "completed" ||
+    //     updatedData.status == "missed" ||
+    //     updatedData.status == "cancelled" ||
+    //     updatedData.status == "none"
+    //   ) {
+    //     updateAstrologerCurrentStatus(originalData.astrologerUid, true);
+    //     console.log("astrologer is online ");
+    //   }
+    // }
+  });
 exports.sendBroadcastNotification = functions.firestore
   .document("/broadcasts/{documentId}")
   .onUpdate(async (change, context) => {
     // Grab the current value of what was written to Firestore.
-
     const originalData = change.before.data();
     const updatedData = change.after.data();
-
     if (
       originalData.status != updatedData.status &&
       updatedData.status == "live"
@@ -1572,20 +1690,19 @@ exports.sendBroadcastNotification = functions.firestore
       );
     }
   });
-
 exports.makeMeeting = functions.firestore
   .document("/meetings/{meetingId}")
   .onCreate(async (snap, context) => {
     // Grab the current value of what was written to Firestore.
     const original = snap.data();
-
+    console.log(original);
     admin
       .firestore()
       .collection("astrologer")
       .doc(original["astrologerUid"])
       .get()
-      .then((userRef) => {
-        astrologerData = userRef.data();
+      .then((astroRef) => {
+        let astrologerData = astroRef.data();
         admin
           .firestore()
           .collection("meetings")
@@ -1594,38 +1711,32 @@ exports.makeMeeting = functions.firestore
             astrologerName: astrologerData.firstName,
             astrologerImage: astrologerData.profilePicLink,
           });
-
         // fcm_notification("token",astrologerData.tokens[astrologerData.tokens.length-1],"Meeting Request","You have a request for meeting",{"type": "meetingCreated"});
       });
-
     admin
       .firestore()
       .collection("user")
       .doc(original["userUid"])
       .get()
       .then((userRef) => {
-        userData = userRef.data();
+        let userData = userRef.data();
         admin
           .firestore()
           .collection("meetings")
           .doc(context.params.meetingId)
           .update({
             userName: userData.firstName,
-            userImage: userData.profilePhotoLink,
+            userImage: userData.profilePhotoLink || userData.profilePic,
           });
       });
-
     return;
   });
-
 exports.makeAdmin = functions.firestore
   .document("/admins/{documentId}")
   .onCreate(async (snap, context) => {
     // Grab the current value of what was written to Firestore.
     const original = snap.data();
-
     functions.logger.log(original);
-
     const writeResult = await admin
       .firestore()
       .collection("security_groups")
@@ -1638,10 +1749,8 @@ exports.makeAdmin = functions.firestore
       .collection("app_details")
       .doc("adminDetails")
       .update({ adminCount: admin.firestore.FieldValue.increment(1) });
-
     return writeResult;
   });
-
 function saveEmailInSendgrid(name, email, listId) {
   const data = {
     list_ids: [listId],
@@ -1652,13 +1761,11 @@ function saveEmailInSendgrid(name, email, listId) {
       },
     ],
   };
-
   const request = {
     url: `/v3/marketing/contacts`,
     method: "PUT",
     body: data,
   };
-
   sgClient
     .request(request)
     .then(([response, body]) => {
@@ -1669,22 +1776,18 @@ function saveEmailInSendgrid(name, email, listId) {
       console.error(error["response"]["body"]);
     });
 }
-
 exports.makeAstrologer = functions.firestore
   .document("/astrologer/{astrologerId}")
   .onCreate(async (snap, context) => {
     // Grab the current value of what was written to Firestore.
     const original = snap.data();
-
     functions.logger.log(original);
-
     // const writeResult = await admin.firestore().collection('security_groups').doc('astrologer').collection('astrologer').doc(context.params.astrologerId).set({"name": original});
     const ref = await admin
       .firestore()
       .collection("app_details")
       .doc("astrologerDetails")
       .update({ astrologerCount: admin.firestore.FieldValue.increment(1) });
-
     admin
       .firestore()
       .collection("app_details")
@@ -1706,7 +1809,6 @@ exports.makeAstrologer = functions.firestore
             liveChatPrice: priceData.liveChatPrice,
           });
       });
-
     // const msg = {
     //   from: 'astrochrchatech@gmail.com', // Something like: Jane Doe <janedoe@gmail.com>
     //   to: original['email'],
@@ -1715,11 +1817,8 @@ exports.makeAstrologer = functions.firestore
     //         name: original['firstName'],
     //   },
     // };
-
     // sgMail.send(msg);
-
     // saveEmailInSendgrid(original['firstName'],original['email'],"79b82482-54aa-4f8f-9007-2d566c4dc7d6");
-
     return writeResult1;
   });
 
@@ -1728,9 +1827,7 @@ exports.makeuser = functions.firestore
   .onCreate(async (snap, context) => {
     // Grab the current value of what was written to Firestore.
     const original = snap.data();
-
     functions.logger.log(original);
-
     const writeResult = await admin
       .firestore()
       .collection("security_groups")
@@ -1740,7 +1837,6 @@ exports.makeuser = functions.firestore
       .set({ name: original });
     const ref = admin.firestore().collection("app_details").doc("userDetails");
     await ref.update({ userCount: admin.firestore.FieldValue.increment(1) });
-
     admin
       .firestore()
       .collection("app_details")
@@ -1754,24 +1850,20 @@ exports.makeuser = functions.firestore
           .doc(context.params.documentId)
           .update({ counter: detailData.userCount });
       });
-
     const msg = {
-      from: "astrochrchatech@gmail.com", // Something like: Jane Doe <janedoe@gmail.com>
+      from: "astrochrchatech@gmail.com",
       to: original["email"],
       templateId: "d-953328393c3a42f6a3c46e084786fb27",
       dynamic_template_data: {
         name: original["firstName"],
       },
     };
-
     sgMail.send(msg);
-
     saveEmailInSendgrid(
       original["firstName"],
       original["email"],
       "ab542a3d-01f2-4f29-b259-036cac1af3e5"
     );
-
     return writeResult;
   });
 
@@ -1780,15 +1872,12 @@ exports.createComment = functions.firestore
   .onCreate(async (snap, context) => {
     // Grab the current value of what was written to Firestore.
     const original = snap.data();
-
     functions.logger.log(original);
-
     const ref = await admin
       .firestore()
       .collection("blog")
       .doc(context.params.blogId)
       .update({ commentCount: admin.firestore.FieldValue.increment(1) });
-
     return true;
   });
 
@@ -1797,15 +1886,12 @@ exports.deleteComment = functions.firestore
   .onDelete(async (snap, context) => {
     // Grab the current value of what was written to Firestore.
     const original = snap.data();
-
     functions.logger.log(original);
-
     const ref = await admin
       .firestore()
       .collection("blog")
       .doc(context.params.blogId)
       .update({ commentCount: admin.firestore.FieldValue.increment(-1) });
-
     return true;
   });
 
@@ -1815,7 +1901,6 @@ exports.updateUser = functions.firestore
     // Grab the current value of what was written to Firestore.
     const originalData = change.before.data();
     const updatedData = change.after.data();
-
     if (originalData.email != updatedData.email) {
       saveEmailInSendgrid(
         originalData.name,
@@ -1823,7 +1908,6 @@ exports.updateUser = functions.firestore
         "ab542a3d-01f2-4f29-b259-036cac1af3e5"
       );
     }
-
     return true;
   });
 
@@ -1832,35 +1916,27 @@ exports.updateRating = functions.firestore
   .onCreate(async (snap, context) => {
     // Grab the current value of what was written to Firestore.
     const original = snap.data();
-
     functions.logger.log(original);
-
     const astrologerRef = await admin
       .firestore()
       .collection("astrologer")
       .doc(context.params.astrologerId);
-
     admin.firestore().runTransaction((transaction) => {
       return transaction.get(astrologerRef).then((res) => {
         if (!res.exists) {
           throw "Document does not exist!";
         }
-
         var newRatingCount = res.data().ratingCount + 1;
-
         var oldRating = res.data().rating * res.data().ratingCount;
         var newRating = (oldRating + original["rating"]) / newRatingCount;
-
         functions.logger.log(oldRating);
         functions.logger.log(newRating);
-
         transaction.update(astrologerRef, {
           ratingCount: newRatingCount,
           rating: newRating.toFixed(2),
         });
       });
     });
-
     return true;
   });
 
@@ -1872,7 +1948,6 @@ exports.addUserInSecurityGroup = functions.firestore
       .collection("user")
       .doc(context.params.userId)
       .update({ enabled: true });
-
     return true;
   });
 
@@ -1884,7 +1959,6 @@ exports.addAstrologerInSecurityGroup = functions.firestore
       .collection("astrologer")
       .doc(context.params.astrologerId)
       .update({ enabled: true });
-
     return true;
   });
 
@@ -1896,10 +1970,8 @@ exports.addAdminInSecurityGroup = functions.firestore
       .collection("admin")
       .doc(context.params.adminId)
       .update({ enabled: true });
-
     return true;
   });
-
 exports.removeUserInSecurityGroup = functions.firestore
   .document("/security_groups/user/user/{userId}")
   .onDelete(async (snap, context) => {
@@ -1908,10 +1980,8 @@ exports.removeUserInSecurityGroup = functions.firestore
       .collection("user")
       .doc(context.params.userId)
       .update({ enabled: false });
-
     return true;
   });
-
 exports.removeAstrologerInSecurityGroup = functions.firestore
   .document("/security_groups/astrologer/astrologer/{userId}")
   .onDelete(async (snap, context) => {
@@ -1920,10 +1990,8 @@ exports.removeAstrologerInSecurityGroup = functions.firestore
       .collection("astrologer")
       .doc(context.params.astrologerId)
       .update({ enabled: false });
-
     return true;
   });
-
 exports.removeAdminInSecurityGroup = functions.firestore
   .document("/security_groups/admin/admin/{adminId}")
   .onDelete(async (snap, context) => {
@@ -1932,32 +2000,25 @@ exports.removeAdminInSecurityGroup = functions.firestore
       .collection("admin")
       .doc(context.params.adminId)
       .update({ enabled: false });
-
     return true;
   });
-
 // exports.createWithdrawal = functions.firestore.document('/astrologer/{paymentId}')
 // .onCreate(async (snap, context) => {
-
 //   try{
 //       instance.transfers.create({
 //           "accountID":"acc_IDuK8WVcCd6hZg",
 //           "amount": 500,
 //           "currency": "INR"
 //         }).then(async (err,response) => {
-
 //         if(err) throw err;
 //         functions.logger.log(response);
-
 //         });
 //       }
 //       catch(e) {
 //         functions.logger.log(e);
 //       }
 //   }
-
 // );
-
 exports.addInterested = functions.firestore
   .document("/broadcasts/{broadcastId}/interested/{interestedId}")
   .onCreate(async (snap, context) => {
@@ -1966,10 +2027,8 @@ exports.addInterested = functions.firestore
       .collection("broadcasts")
       .doc(context.params.broadcastId)
       .update({ interestedCount: admin.firestore.FieldValue.increment(1) });
-
     return true;
   });
-
 exports.deleteInterested = functions.firestore
   .document("/broadcasts/{broadcastId}/interested/{interestedId}")
   .onDelete(async (snap, context) => {
@@ -1978,10 +2037,8 @@ exports.deleteInterested = functions.firestore
       .collection("broadcasts")
       .doc(context.params.broadcastId)
       .update({ interestedCount: admin.firestore.FieldValue.increment(-1) });
-
     return true;
   });
-
 exports.createInventory = functions.firestore
   .document("/items/{itemId}")
   .onCreate(async (snap, context) => {
@@ -1991,15 +2048,12 @@ exports.createInventory = functions.firestore
       .doc(context.params.itemId)
       .collection("inventory")
       .add({ quantity: 0 });
-
     return true;
   });
-
 exports.updateInventory = functions.firestore
   .document("/items/{itemId}/inventory/{inventoryId}")
   .onCreate(async (original, context) => {
     // Grab the current value of what was written to Firestore.
-
     const ref = await admin
       .firestore()
       .collection("item")
@@ -2007,32 +2061,26 @@ exports.updateInventory = functions.firestore
       .update({
         available: admin.firestore.FieldValue.increment(original.data().qty),
       });
-
     return true;
   });
-
 exports.walletWithdrawal = functions.firestore
   .document("/wallet_withdrawal/{withdrawalId}")
   .onCreate(async (snap, context) => {
     const original = snap.data();
-
     updateAstrologerBalance2(
       original.astrologer,
       -original.amount,
       context.params.withdrawalId,
       "withdrawal"
     );
-
     return true;
   });
-
 exports.updateAstrologer = functions.firestore
   .document("/astrologer/{astrologerId}")
   .onUpdate(async (change, context) => {
     // Grab the current value of what was written to Firestore.
     const originalData = change.before.data();
     const updatedData = change.after.data();
-
     if (originalData.pricingCategory != updatedData.pricingCategory) {
       admin
         .firestore()
@@ -2056,13 +2104,12 @@ exports.updateAstrologer = functions.firestore
             });
         });
     }
-
     if (
       originalData.status["state"] != updatedData.status["state"] &&
       updatedData.status["state"] == "verified"
     ) {
       const msg = {
-        from: "astrochrchatech@gmail.com", // Something like: Jane Doe <janedoe@gmail.com>
+        from: "astrochrchatech@gmail.com",
         to: updatedData.email,
         templateId: "d-1a49291b91ec4729aef74e5a410a3db4",
         dynamic_template_data: {
@@ -2070,14 +2117,13 @@ exports.updateAstrologer = functions.firestore
           name: updatedData.firstName,
         },
       };
-
       sgMail.send(msg);
     } else if (
       originalData.status["state"] != updatedData.status["state"] &&
       updatedData.status["state"] == "rejected"
     ) {
       const msg = {
-        from: "astrochrchatech@gmail.com", // Something like: Jane Doe <janedoe@gmail.com>
+        from: "astrochrchatech@gmail.com",
         to: updatedData.email,
         templateId: "d-a685246e05224cacace136476f4caf87",
         dynamic_template_data: {
@@ -2085,10 +2131,8 @@ exports.updateAstrologer = functions.firestore
           name: updatedData.firstName,
         },
       };
-
       sgMail.send(msg);
     }
-
     if (originalData.email != updatedData.email) {
       saveEmailInSendgrid(
         originalData.name,
@@ -2096,16 +2140,13 @@ exports.updateAstrologer = functions.firestore
         "79b82482-54aa-4f8f-9007-2d566c4dc7d6"
       );
     }
-
     return true;
   });
-
 exports.updateWalletWithdrawal = functions.firestore
   .document("/wallet_withdrawal/{withdrawalId}")
   .onUpdate(async (change, context) => {
     const originalData = change.before.data();
     const updatedData = change.after.data();
-
     if (originalData.status != updatedData.status) {
       if (updatedData.status == "approved") {
         try {
@@ -2151,7 +2192,6 @@ exports.updateWalletWithdrawal = functions.firestore
             "withdrawal"
           );
         }
-
         admin
           .firestore()
           .collection("astrologer")
@@ -2160,7 +2200,7 @@ exports.updateWalletWithdrawal = functions.firestore
           .then((astrologerRef) => {
             data = astrologerRef.data();
             const msg = {
-              from: "astrochrchatech@gmail.com", // Something like: Jane Doe <janedoe@gmail.com>
+              from: "astrochrchatech@gmail.com",
               to: data["email"],
               templateId: "d-68b0e46471734ae9b5f6ffbd00a981a0",
               dynamic_template_data: {
@@ -2168,7 +2208,6 @@ exports.updateWalletWithdrawal = functions.firestore
                 name: "user.displayName",
               },
             };
-
             sgMail.send(msg);
           });
       } else if (updatedData.status == "rejected") {
@@ -2186,7 +2225,7 @@ exports.updateWalletWithdrawal = functions.firestore
           .then((astrologerRef) => {
             data = astrologerRef.data();
             const msg = {
-              from: "astrochrchatech@gmail.com", // Something like: Jane Doe <janedoe@gmail.com>
+              from: "astrochrchatech@gmail.com",
               to: data["email"],
               templateId: "d-ff3a63f4a47f4a2aa4c38824db49ca54",
               dynamic_template_data: {
@@ -2194,15 +2233,12 @@ exports.updateWalletWithdrawal = functions.firestore
                 name: "user.displayName",
               },
             };
-
             sgMail.send(msg);
           });
       }
     }
-
     return true;
   });
-
 exports.updatePricingCategory = functions.firestore
   .document(
     "/app_details/astrologerDetails/pricing_categories/{pricingCategory}"
@@ -2210,7 +2246,6 @@ exports.updatePricingCategory = functions.firestore
   .onUpdate(async (change, context) => {
     const updatedData = change.after.data();
     const _datarwt = [];
-
     await admin
       .firestore()
       .collection("astrologer")
@@ -2243,13 +2278,10 @@ exports.updatePricingCategory = functions.firestore
               }
             });
         });
-
         const _dataloaded = await Promise.all(_datarwt);
-
         return _dataloaded;
       });
   });
-
 exports.scheduledFunctionCrontab = functions.pubsub
   .schedule("00 00 * * *")
   .timeZone("Asia/Kolkata") // Users can choose timezone - default is America/Los_Angeles
@@ -2284,7 +2316,6 @@ exports.scheduledFunctionCrontab = functions.pubsub
     //     });
     //   });
     // });
-
     const currentDate = admin.firestore.Timestamp.now();
     const startDate = new admin.firestore.Timestamp(
       currentDate.seconds - 176400,
@@ -2294,10 +2325,8 @@ exports.scheduledFunctionCrontab = functions.pubsub
       currentDate.seconds - 86400,
       currentDate.nanoseconds
     ).toDate();
-
     console.log(startDate);
     console.log(endDate);
-
     admin
       .firestore()
       .collection("meetings")
@@ -2343,7 +2372,6 @@ exports.scheduledFunctionCrontab = functions.pubsub
             });
         });
       });
-
     admin
       .firestore()
       .collection("broadcasts")
@@ -2373,22 +2401,16 @@ exports.scheduledFunctionCrontab = functions.pubsub
             });
         });
       });
-
     const _dataloaded = await Promise.all(_datarwt);
-
     return _dataloaded;
   });
-
 exports.backupFirestore = functions.pubsub
   .schedule("02 10 * * *")
   .onRun(async (context) => {
     const projectId = "astrochrchafirebase";
-
     const timestamp = new Date().toISOString();
-
     console.log(`Start to backup project ${projectId}`);
     console.log(key.client_email);
-
     await authClient.authorize();
     console.log("dvsdvs");
     return firestoreClient.projects.databases.exportDocuments({
@@ -2398,6 +2420,7 @@ exports.backupFirestore = functions.pubsub
       },
     });
   });
+//# sourceMappingURL=index.js.map
 
 async function getFirebaseData(collection, id) {
   let firebaseRef = await admin
@@ -2407,51 +2430,8 @@ async function getFirebaseData(collection, id) {
     .get();
   return { id: firebaseRef.id, ...firebaseRef.data() };
 }
-// making call using knwolarity api and updateing the meeting information /////////////////////
-exports.makeCall = functions.https.onRequest(async (req, res) => {
-  let { customerNumber, language, astrologerUid, userUid, query } = req.body;
-  console.log(req.body);
 
-  try {
-    let astrologerData = await getFirebaseData("astrologer", astrologerUid);
-    let userData = await getFirebaseData("user", userUid);
-    console.log(astrologerData);
-    console.log(userData);
-    let result = await initiateCall(customerNumber, astrologerData?.phoneNumber);
-    await admin.firestore().collection("meetings").doc().set({
-      astrologerUid,
-      userUid,
-      customerNumber,
-      astrologerNumber: astrologerData?.phoneNumber,
-      type: "voice",
-      status: "created",
-      subType: "Right Now",
-      language,
-      query,
-      lastAmountDeduct: "0",
-      lastActualDuration: "0",
-      lastDuration: "0",
-      totalAmount: "0",
-      totalDuration: "0",
-      scheduledTime: admin.firestore.FieldValue.serverTimestamp(),
-      date: admin.firestore.FieldValue.serverTimestamp(),
-      rate: "0",
-      rateMessage: "",
-      name: userData.firstName,
-      pob: userData.placeOfBirth,
-      callStatics: result,
-    });
-
-    return res
-      .status(200)
-      .json({ success: true, message: "sucessfullly call initiated" });
-  } catch (error) {
-    console.log(error);
-    return res.status(400).json({ success: false, error });
-  }
-});
-
-function initiateCall(customerNumber, astrologerNumber) {
+function initiateCall(customerNumber, astrologerNumber, totalMaxDuration) {
   return new Promise(async (resolve, reject) => {
     try {
       let config = {
@@ -2464,21 +2444,112 @@ function initiateCall(customerNumber, astrologerNumber) {
         },
         data: {
           customer_number: customerNumber, // userCallingNumber
-          agent_number: "+919389112183", // astrologerCallingNumber
+          agent_number: astrologerNumber, // astrologerCallingNumber prod
+          // agent_number: "+919389112183", // astrologerCallingNumber dev
           k_number: "+917353000782",
           caller_id: "+918035240820",
-          additional_params: { total_call_duration: 15 },
+          additional_params: { total_call_duration: totalMaxDuration },
         },
       };
       let response = await axios(config);
+      console.log(response);
       resolve({
         ...response.data.success,
-        k_number: "+917353000782",
-        caller_id: "+918035240820",
       });
     } catch (error) {
       reject(error.response.data || error.message.data || error.message);
-      console.log(error);
+      console.log("error", error);
     }
   });
 }
+
+function convertIntoMinutes(str) {
+  let [hours, minutes, seconds] = str.split(".");
+  let totalSeconds = hours * 60 * 60 + minutes * 60 + seconds * 1;
+  return [Math.round(totalSeconds), Math.round(totalSeconds / 60)];
+}
+
+exports.onKnowlarityUpdate = functions.firestore
+  .document("/knowlarity_statics/{callingStatsId}")
+  .onCreate(async (snap, context) => {
+    let originalData = snap.data();
+    console.log("values", originalData.callUniqueId);
+
+    try {
+      let meetingSnapShot = await admin
+        .firestore()
+        .collection("meetings")
+        .where("callUniqueId", "==", originalData.callUniqueId)
+        .get();
+
+      let meetingRef = meetingSnapShot.docs.map((item) => {
+        return { id: item.id, ...item.data() };
+      });
+      console.log("Metting", meetingRef);
+
+      let astrologerData = await getFirebaseData(
+        "astrologer",
+        meetingRef[0]["astrologerUid"]
+      );
+      let pricePerMinute = astrologerData.priceVoice;
+      let meetingTotalAmount = meetingRef[0].totalAmount;
+      let [totalDurationInSeconds, totalDurationInMinutes] = convertIntoMinutes(
+        originalData.callDuration
+      );
+      let callActualAmount =
+        parseInt(totalDurationInSeconds / 60) * pricePerMinute;
+      let callStatus = "";
+      let userAmount = meetingTotalAmount - callActualAmount;
+
+      switch (originalData.callStatus) {
+        case "Connected":
+          callStatus = "completed";
+          break;
+        case "Missed":
+          callStatus = "missed";
+          break;
+        case "None":
+          callStatus = "cancelled";
+          break;
+        default:
+          break;
+      }
+      console.log("callStatus", callStatus);
+      admin.firestore().collection("meetings").doc(meetingRef[0]["id"]).update({
+        status: callStatus,
+        callDuration: originalData.callDuration,
+        callDateAndTime: originalData.callDateAndTime,
+        totalAmount: callActualAmount,
+        totalDuration: totalDurationInMinutes,
+        totalMaxDuration: totalDurationInSeconds, // in minutes
+        lastActualDuration: totalDurationInMinutes,
+        lastAmountDeduct: callActualAmount,
+        lastDuration: totalDurationInMinutes, // in minutes
+      });
+      admin
+        .firestore()
+        .collection("user")
+        .doc(meetingRef[0]["userUid"])
+        .update({
+          walletBalance: admin.firestore.FieldValue.increment(+userAmount),
+          freezedAmount: admin.firestore.FieldValue.increment(
+            -meetingTotalAmount
+          ),
+        });
+      admin
+        .firestore()
+        .collection("user")
+        .doc(meetingRef[0]["userUid"])
+        .collection("wallet_transaction")
+        .add({
+          subtypeId: meetingRef[0]["id"],
+          amount: +callActualAmount,
+          type: "debit",
+          subtype: "meeting",
+          date: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      console.log("wallet intiated");
+    } catch (error) {
+      console.log(error);
+    }
+  });
