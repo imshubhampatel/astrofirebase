@@ -23,7 +23,6 @@ const cors = require("cors")({
 });
 const main = express();
 const key = require("../service-key.json");
-const knowlarity_1 = require("./knowlarity");
 const { user } = require("firebase-functions/v1/auth");
 const authClient = new googleapis.google.auth.JWT({
   email: key.client_email,
