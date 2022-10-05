@@ -493,6 +493,7 @@ app.post("/intiatetransaction/", async (req, response) => {
 // http://localhost:5001/astrochrchafirebase/us-central1/webApi/api/intiatetransaction_razorypay
 
 app.post("/intiatetransaction_razorypay/", async (req, res) => {
+  const amount = req.body.amount;
   const instance = new Razorpay({
     key_id: "rzp_test_FuZPDTFdRxeNou",
     key_secret: "MezhnZ5AHkmOsBbK8iCd8TfH",
@@ -503,7 +504,7 @@ app.post("/intiatetransaction_razorypay/", async (req, res) => {
   const currency = "INR";
   try {
     const options = {
-      amount: (499 * 100).toString(),
+      amount: (amount * 100).toString(),
       currency,
       receipt: shortId.generate(),
       payment_capture,
