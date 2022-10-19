@@ -525,18 +525,21 @@ app.post("/intiatetransaction_razorypay/", async (req, res) => {
 });
 
 app.post("/razor_capture/:paymentId", (req, res) => {
+  let amount = req.body.amount;
   let config = {
     RAZOR_PAY_KEY_ID: "rzp_test_FuZPDTFdRxeNou",
     RAZOR_PAY_KEY_SECRET: "MezhnZ5AHkmOsBbK8iCd8TfH",
   };
   console.log("called");
+  console.log("amount", amount);
+
   try {
     return request(
       {
         method: "POST",
         url: `https://${config.RAZOR_PAY_KEY_ID}:${config.RAZOR_PAY_KEY_SECRET}@api.razorpay.com/v1/payments/${req.params.paymentId}/capture`,
         form: {
-          amount: 499 * 100, // amount == Rs 499 // Same As Order amount
+          amount: amount, // amount == Rs 499 // Same As Order amount
           currency: "INR",
         },
       },
@@ -1258,6 +1261,7 @@ function getUserActualAmout(amout) {
 }
 app.post("/make-call", async (req, res) => {
   console.log("hey");
+  console.log("body:", req.body);
   let {
     customerNumber,
     language,
@@ -1270,6 +1274,7 @@ app.post("/make-call", async (req, res) => {
     placeOfBirth,
     dateOfBirth,
   } = req.body;
+  console.log(astrologerUid);
   console.log(req.body);
   try {
     let astrologerData = await getFirebaseData("astrologer", astrologerUid);
@@ -1291,7 +1296,7 @@ app.post("/make-call", async (req, res) => {
     }
     //? initiating call to user and astrologer
     let result = await initiateCall(
-      customerNumber,
+      checkNum(customerNumber),
       checkNum(astrologerData.phoneNumber),
       totalMaxDuration
     );
