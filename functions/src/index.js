@@ -506,7 +506,7 @@ app.post("/intiatetransaction_razorypay/", async (req, res) => {
     const options = {
       amount: (amount * 100).toString(),
       currency,
-      receipt: shortId.generate(),
+      receipt: Date.now(),
       payment_capture,
     };
     instance.orders.create(options, async function (err, order) {
@@ -863,7 +863,7 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
     .collection("payments")
     .doc(req.body["ORDERID"])
     .get()
-    .then((paymentRef) => {
+    .then(async (paymentRef) => {
       paymentData = paymentRef.data();
       console.log(paymentData);
       if (req.body["STATUS"] == "TXN_SUCCESS") {
@@ -891,7 +891,7 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
           .firestore()
           .collection("app_details")
           .doc("adminDetails");
-        admin.firestore().runTransaction((transaction) => {
+        await admin.firestore().runTransaction((transaction) => {
           return transaction.get(adminRef).then((res) => {
             if (!res.exists) {
               throw "Document does not exist!";
@@ -932,6 +932,7 @@ app.post("/updatetransaction_razorpay/", async (req, response) => {
               .get()
               .then((userRef) => {
                 data = userRef.data();
+                console.log(data);
                 const msg = {
                   from: "astrochrchatech@gmail.com",
                   to: data["email"],
