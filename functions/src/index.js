@@ -263,16 +263,13 @@ function addCashbackMoney(user, amount, orderID, cashbackName) {
     .doc(user)
     .update({ rechargeCount: admin.firestore.FieldValue.increment(1) });
   console.log("entry 5");
-  db.collection("user")
-    .doc(user)
-    .collection("wallet_transaction")
-    .add({
-      subtypeId: orderID,
-      amount: +amount,
-      type: "credit",
-      subtype: "cashback",
-      date: admin.firestore.FieldValue.serverTimestamp(),
-    });
+  db.collection("user").doc(user).collection("wallet_transaction").add({
+    subtypeId: orderID,
+    amount: +amount,
+    type: "credit",
+    subtype: "cashback",
+    date: admin.firestore.FieldValue.serverTimestamp(),
+  });
   console.log("entry 6");
   db.collection("user")
     .doc(user)
@@ -1294,6 +1291,10 @@ app.post("/make-call", async (req, res) => {
       return res
         .status(403)
         .json({ success: false, message: "insufficient wallet balance" });
+    }
+
+    if (totalMaxDuration == null) {
+      totalMaxDuration = 15;
     }
     //? initiating call to user and astrologer
     let result = await initiateCall(
@@ -2438,6 +2439,7 @@ async function getFirebaseData(collection, id) {
 }
 
 function initiateCall(customerNumber, astrologerNumber, totalMaxDuration) {
+  console.log("data", customerNumber, astrologerNumber, totalMaxDuration);
   return new Promise(async (resolve, reject) => {
     try {
       let config = {
@@ -2470,9 +2472,13 @@ function initiateCall(customerNumber, astrologerNumber, totalMaxDuration) {
 }
 
 function convertIntoMinutes(str) {
-  let [hours, minutes, seconds] = str.split(".");
+  let [hours, minutes, seconds] = str.split(":");
   let totalSeconds = hours * 60 * 60 + minutes * 60 + seconds * 1;
-  return [Math.round(totalSeconds), Math.round(totalSeconds / 60)];
+  let ttlMinues = Math.round(totalSeconds / 60);
+  let ttlSeconds = Math.round(totalSeconds);
+  console.log({ ttlMinues });
+  console.log({ ttlSeconds });
+  return [ttlSeconds, ttlMinues];
 }
 
 exports.onKnowlarityUpdate = functions.firestore
@@ -2480,6 +2486,8 @@ exports.onKnowlarityUpdate = functions.firestore
   .onCreate(async (snap, context) => {
     let originalData = snap.data();
     console.log("values", originalData.callUniqueId);
+    console.log({ originalData });
+    console.log(originalData.callDuration);
 
     try {
       let meetingSnapShot = await admin
@@ -2488,17 +2496,20 @@ exports.onKnowlarityUpdate = functions.firestore
         .where("callUniqueId", "==", originalData.callUniqueId)
         .get();
 
-      let meetingRef = meetingSnapShot.docs.map((item) => {
+      let meetingsDetailsRef = meetingSnapShot.docs.map((item) => {
         return { id: item.id, ...item.data() };
       });
-      console.log("Metting", meetingRef);
+      let [meetingRef] = meetingsDetailsRef;
 
       let astrologerData = await getFirebaseData(
         "astrologer",
-        meetingRef[0]["astrologerUid"]
+        meetingRef.astrologerUid
       );
       let pricePerMinute = astrologerData.priceVoice;
-      let meetingTotalAmount = meetingRef[0].totalAmount;
+      let meetingTotalAmount = meetingRef.totalAmount;
+
+      console.log(pricePerMinute);
+      console.log({ callDuration: originalData.callDuration });
       let [totalDurationInSeconds, totalDurationInMinutes] = convertIntoMinutes(
         originalData.callDuration
       );
@@ -2506,6 +2517,17 @@ exports.onKnowlarityUpdate = functions.firestore
         parseInt(totalDurationInSeconds / 60) * pricePerMinute;
       let callStatus = "";
       let userAmount = meetingTotalAmount - callActualAmount;
+      console.log("started debuigging");
+      console.log({ astrologerData });
+      console.log({ meetingRef });
+      console.log({ pricePerMinute });
+      console.log({ totalDurationInMinutes });
+      console.log({ totalDurationInSeconds });
+      console.log({ meetingTotalAmount });
+      console.log({ userAmount });
+      console.log({ callActualAmount });
+      console.log(typeof userAmount);
+      console.log(typeof meetingTotalAmount);
 
       switch (originalData.callStatus) {
         case "Connected":
@@ -2521,7 +2543,7 @@ exports.onKnowlarityUpdate = functions.firestore
           break;
       }
       console.log("callStatus", callStatus);
-      admin.firestore().collection("meetings").doc(meetingRef[0]["id"]).update({
+      admin.firestore().collection("meetings").doc(meetingRef.id).update({
         status: callStatus,
         callDuration: originalData.callDuration,
         callDateAndTime: originalData.callDateAndTime,
@@ -2532,10 +2554,13 @@ exports.onKnowlarityUpdate = functions.firestore
         lastAmountDeduct: callActualAmount,
         lastDuration: totalDurationInMinutes, // in minutes
       });
+
+      meetingTotalAmount = +meetingTotalAmount;
+      userAmount = +userAmount;
       admin
         .firestore()
         .collection("user")
-        .doc(meetingRef[0]["userUid"])
+        .doc(meetingRef.userUid)
         .update({
           walletBalance: admin.firestore.FieldValue.increment(+userAmount),
           freezedAmount: admin.firestore.FieldValue.increment(
@@ -2545,10 +2570,10 @@ exports.onKnowlarityUpdate = functions.firestore
       admin
         .firestore()
         .collection("user")
-        .doc(meetingRef[0]["userUid"])
+        .doc(meetingRef.userUid)
         .collection("wallet_transaction")
         .add({
-          subtypeId: meetingRef[0]["id"],
+          subtypeId: meetingRef.id,
           amount: +callActualAmount,
           type: "debit",
           subtype: "meeting",
