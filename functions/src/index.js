@@ -492,8 +492,8 @@ app.post("/intiatetransaction/", async (req, response) => {
 app.post("/intiatetransaction_razorypay/", async (req, res) => {
   const amount = req.body.amount;
   const instance = new Razorpay({
-    key_id: "rzp_live_qQu2IyydGrZJfS",
-    key_secret: "qBHeVXImlQZ8JbZ2FS8fAZDN",
+    key_id: "rzp_live_HtSXOjPKXdc4zr",
+    key_secret: "2r4edRB1RMpy3CUAy6nT8a7S",
   });
 
   const payment_capture = 0;
@@ -524,8 +524,8 @@ app.post("/intiatetransaction_razorypay/", async (req, res) => {
 app.post("/razor_capture/:paymentId", (req, res) => {
   let amount = req.body.amount;
   let config = {
-    RAZOR_PAY_KEY_ID: "rzp_live_qQu2IyydGrZJfS",
-    RAZOR_PAY_KEY_SECRET: "qBHeVXImlQZ8JbZ2FS8fAZDN",
+    RAZOR_PAY_KEY_ID: "rzp_live_HtSXOjPKXdc4zr",
+    RAZOR_PAY_KEY_SECRET: "2r4edRB1RMpy3CUAy6nT8a7S",
   };
   console.log("called");
   console.log("amount", amount);
